@@ -4,6 +4,7 @@ import sqlite3
 import os
 import sys
 import html
+import io
 from datetime import datetime
 from http import cookies
 
@@ -2620,6 +2621,101 @@ class TicketServerHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             self.wfile.write(b"404 Not Found")
+
+# ==========================================
+# WSGI ADAPTER (FOR PYTHONANYWHERE & CLOUD)
+# ==========================================
+
+class WSGIHandlerAdapter:
+    def __init__(self, environ):
+        self.environ = environ
+        self.path = environ.get("PATH_INFO", "/")
+        qs = environ.get("QUERY_STRING", "")
+        if qs:
+            self.path += "?" + qs
+        self.command = environ.get("REQUEST_METHOD", "GET")
+        self.headers = {}
+        for k, v in environ.items():
+            if k.startswith("HTTP_"):
+                header_name = k[5:].replace("_", "-").title()
+                self.headers[header_name] = v
+            elif k in ("CONTENT_TYPE", "CONTENT_LENGTH"):
+                self.headers[k.replace("_", "-").title()] = v
+        self.rfile = environ.get("wsgi.input") or io.BytesIO(b"")
+        self.wfile = io.BytesIO()
+        self.status_code = 200
+        self.response_headers = []
+
+    def get_current_user(self):
+        cookie_header = self.headers.get("Cookie")
+        if cookie_header:
+            c = cookies.SimpleCookie()
+            try:
+                c.load(cookie_header)
+                if "auth_user" in c:
+                    username = c["auth_user"].value
+                    return get_user_by_username(username)
+            except Exception:
+                pass
+        return None
+
+    def parse_post_data(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        post_body = self.rfile.read(content_length).decode("utf-8") if self.rfile else ""
+        parsed = urllib.parse.parse_qs(post_body)
+        return {k: v[0] for k, v in parsed.items()}
+
+    def send_response(self, code, message=None):
+        self.status_code = code
+
+    def send_header(self, keyword, value):
+        self.response_headers.append((keyword, str(value)))
+
+    def end_headers(self):
+        pass
+
+    def send_html_response(self, html_content, set_cookie_auth=None, clear_auth=False):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        if set_cookie_auth:
+            self.send_header("Set-Cookie", f"auth_user={set_cookie_auth}; Path=/; HttpOnly; SameSite=Lax")
+        elif clear_auth:
+            self.send_header("Set-Cookie", "auth_user=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT")
+        self.end_headers()
+        self.wfile.write(html_content.encode("utf-8"))
+
+    def send_redirect(self, location, set_cookie_auth=None, clear_auth=False, remember_me=False):
+        self.send_response(302)
+        self.send_header("Location", location)
+        if set_cookie_auth:
+            max_age_str = "; Max-Age=2592000" if remember_me else ""
+            self.send_header("Set-Cookie", f"auth_user={set_cookie_auth}; Path=/{max_age_str}; HttpOnly; SameSite=Lax")
+        elif clear_auth:
+            self.send_header("Set-Cookie", "auth_user=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT")
+        self.end_headers()
+
+def application(environ, start_response):
+    init_db()
+    handler = WSGIHandlerAdapter(environ)
+    if handler.command == "GET":
+        TicketServerHandler.do_GET(handler)
+    elif handler.command == "POST":
+        TicketServerHandler.do_POST(handler)
+    else:
+        handler.send_response(405)
+        handler.send_header("Content-Type", "text/plain")
+        handler.end_headers()
+        handler.wfile.write(b"Method Not Allowed")
+
+    status_phrases = {
+        200: "200 OK",
+        302: "302 Found",
+        404: "404 Not Found",
+        405: "405 Method Not Allowed"
+    }
+    status_str = status_phrases.get(handler.status_code, f"{handler.status_code} Status")
+    start_response(status_str, handler.response_headers)
+    return [handler.wfile.getvalue()]
 
 def main():
     print(f"================================================================")

@@ -1,0 +1,303 @@
+{% extends "base.html" %}
+
+{% block title %}Oakridge Staff Portal | IT Helpdesk{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+  
+  <!-- HERO GREETING BANNER -->
+  <div class="relative overflow-hidden rounded-2xl bg-gradient-to-r from-brand-700 via-indigo-700 to-indigo-900 p-6 sm:p-8 text-white shadow-xl shadow-brand-900/10">
+    <div class="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+      <div class="space-y-2 max-w-2xl">
+        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 backdrop-blur-md text-xs font-semibold text-indigo-100 border border-white/20">
+          <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+          <span>Oakridge Cooperative School IT Desk</span>
+        </div>
+        <h1 class="text-2xl sm:text-3xl font-extrabold tracking-tight">
+          Welcome back, Oakridge Staff! 👋
+        </h1>
+        <p class="text-indigo-100 text-sm sm:text-base leading-relaxed">
+          Need a website bug fixed, content updated for your classroom, or parent portal assistance? Submit a ticket below, and solo IT lead <strong>Alex Reed</strong> will follow up promptly.
+        </p>
+      </div>
+
+      <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 shrink-0">
+        <a href="{{ url_for('submit_ticket') }}" class="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-white text-brand-700 hover:bg-brand-50 font-bold text-sm shadow-lg shadow-black/10 hover:shadow-xl transition-all transform hover:-translate-y-0.5">
+          <i data-lucide="plus-circle" class="w-5 h-5 text-brand-600"></i>
+          <span>Submit New Ticket</span>
+        </a>
+      </div>
+    </div>
+
+    <!-- Decorative background elements -->
+    <div class="absolute -right-12 -top-12 w-64 h-64 rounded-full bg-white/5 blur-2xl pointer-events-none"></div>
+    <div class="absolute right-1/3 -bottom-16 w-80 h-80 rounded-full bg-indigo-500/10 blur-3xl pointer-events-none"></div>
+  </div>
+
+  <!-- SUMMARY METRICS CARDS -->
+  <div class="grid grid-cols-1 sm:grid-cols-3 gap-5">
+    
+    <!-- Total Tickets -->
+    <div class="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">Total Submitted</p>
+          <p class="text-3xl font-extrabold text-slate-900 mt-1">{{ metrics.total }}</p>
+          <p class="text-xs text-slate-400 mt-1">Across all school departments</p>
+        </div>
+        <div class="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center text-slate-600">
+          <i data-lucide="inbox" class="w-6 h-6"></i>
+        </div>
+      </div>
+    </div>
+
+    <!-- Open / Pending Tickets -->
+    <div class="bg-white p-5 rounded-2xl border border-blue-200/80 shadow-sm hover:shadow-md transition-shadow relative overflow-hidden">
+      <div class="absolute top-0 left-0 right-0 h-1 bg-blue-500"></div>
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-xs font-semibold uppercase tracking-wider text-blue-700">Open & Active</p>
+          <p class="text-3xl font-extrabold text-blue-900 mt-1">{{ metrics.open + metrics.in_progress }}</p>
+          <div class="flex items-center gap-2 mt-1 text-xs text-blue-600">
+            <span>{{ metrics.open }} Open</span>
+            <span>&bull;</span>
+            <span>{{ metrics.in_progress }} In Progress</span>
+          </div>
+        </div>
+        <div class="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600 border border-blue-100">
+          <i data-lucide="clock" class="w-6 h-6"></i>
+        </div>
+      </div>
+    </div>
+
+    <!-- Resolved Tickets -->
+    <div class="bg-white p-5 rounded-2xl border border-emerald-200/80 shadow-sm hover:shadow-md transition-shadow relative overflow-hidden">
+      <div class="absolute top-0 left-0 right-0 h-1 bg-emerald-500"></div>
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-xs font-semibold uppercase tracking-wider text-emerald-700">Resolved</p>
+          <p class="text-3xl font-extrabold text-emerald-900 mt-1">{{ metrics.resolved + metrics.closed }}</p>
+          <p class="text-xs text-emerald-600 mt-1">Verified fixes & updates</p>
+        </div>
+        <div class="w-12 h-12 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600 border border-emerald-100">
+          <i data-lucide="check-circle-2" class="w-6 h-6"></i>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- MY TICKETS SECTION -->
+  <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+    
+    <!-- Table Header with Search and Actions -->
+    <div class="p-5 sm:p-6 border-b border-slate-200/80 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 bg-slate-50/50">
+      <div>
+        <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+          <i data-lucide="clipboard-list" class="w-5 h-5 text-brand-600"></i>
+          <span>Cooperative Tickets Directory</span>
+        </h2>
+        <p class="text-xs text-slate-500 mt-0.5">Click any ticket row to view the full resolution timeline and developer notes</p>
+      </div>
+
+      <!-- Search & Filters -->
+      <form method="GET" action="{{ url_for('index') }}" class="flex items-center gap-2">
+        <div class="relative w-full sm:w-72">
+          <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+          <input type="text" name="q" value="{{ search_query }}" placeholder="Search tickets by subject or ID..." 
+                 class="w-full pl-9 pr-4 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 bg-white">
+        </div>
+        <button type="submit" class="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold">
+          Search
+        </button>
+        {% if search_query %}
+          <a href="{{ url_for('index') }}" class="px-2.5 py-2 rounded-xl text-slate-500 hover:text-slate-700 text-xs font-semibold" title="Clear search">
+            Clear
+          </a>
+        {% endif %}
+      </form>
+    </div>
+
+    <!-- Interactive Table -->
+    <div class="overflow-x-auto">
+      <table class="w-full text-left text-sm text-slate-600 divide-y divide-slate-200/80">
+        <thead class="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+          <tr>
+            <th scope="col" class="px-5 py-3.5">Ticket ID</th>
+            <th scope="col" class="px-5 py-3.5">Date</th>
+            <th scope="col" class="px-5 py-3.5">Subject</th>
+            <th scope="col" class="px-5 py-3.5">Type</th>
+            <th scope="col" class="px-5 py-3.5">Priority</th>
+            <th scope="col" class="px-5 py-3.5">Status</th>
+            <th scope="col" class="px-5 py-3.5 text-right">Action</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100 bg-white">
+          {% if tickets %}
+            {% for ticket in tickets %}
+              <tr class="hover:bg-brand-50/40 transition-colors cursor-pointer group" onclick="window.location='{{ url_for('ticket_detail', ticket_id=ticket.id) }}'">
+                
+                <!-- Ticket ID -->
+                <td class="px-5 py-4 whitespace-nowrap">
+                  <span class="font-mono text-xs font-bold text-slate-900 bg-slate-100 px-2.5 py-1 rounded-md border border-slate-200 group-hover:border-brand-300 group-hover:bg-brand-50 group-hover:text-brand-700 transition-colors">
+                    {{ ticket.id }}
+                  </span>
+                </td>
+
+                <!-- Date -->
+                <td class="px-5 py-4 whitespace-nowrap text-xs text-slate-500">
+                  {{ ticket.created_at }}
+                </td>
+
+                <!-- Subject -->
+                <td class="px-5 py-4">
+                  <div class="max-w-md">
+                    <p class="font-semibold text-slate-900 group-hover:text-brand-700 transition-colors text-sm line-clamp-1">
+                      {{ ticket.subject }}
+                    </p>
+                    <p class="text-xs text-slate-400 mt-0.5 line-clamp-1">
+                      Submitted by {{ ticket.submitter_name }} &bull; {{ ticket.submitter_role }}
+                    </p>
+                  </div>
+                </td>
+
+                <!-- Issue Type -->
+                <td class="px-5 py-4 whitespace-nowrap">
+                  <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium 
+                    {% if ticket.issue_type == 'Web Bug/Error' %}bg-rose-50 text-rose-700 border border-rose-200
+                    {% elif ticket.issue_type == 'New Feature Request' %}bg-purple-50 text-purple-700 border border-purple-200
+                    {% elif ticket.issue_type == 'Content Update' %}bg-cyan-50 text-cyan-700 border border-cyan-200
+                    {% else %}bg-amber-50 text-amber-700 border border-amber-200{% endif %}">
+                    {% if ticket.issue_type == 'Web Bug/Error' %}
+                      <i data-lucide="bug" class="w-3.5 h-3.5"></i>
+                    {% elif ticket.issue_type == 'New Feature Request' %}
+                      <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+                    {% elif ticket.issue_type == 'Content Update' %}
+                      <i data-lucide="file-text" class="w-3.5 h-3.5"></i>
+                    {% else %}
+                      <i data-lucide="key-round" class="w-3.5 h-3.5"></i>
+                    {% endif %}
+                    <span>{{ ticket.issue_type }}</span>
+                  </span>
+                </td>
+
+                <!-- Priority Badge -->
+                <td class="px-5 py-4 whitespace-nowrap">
+                  {% if ticket.priority == 'Critical' %}
+                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                      <span class="w-2 h-2 rounded-full bg-rose-600 animate-pulse"></span>
+                      <span>Critical</span>
+                    </span>
+                  {% elif ticket.priority == 'High' %}
+                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-orange-50 text-orange-700 border border-orange-200">
+                      High
+                    </span>
+                  {% elif ticket.priority == 'Medium' %}
+                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                      Medium
+                    </span>
+                  {% else %}
+                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                      Low
+                    </span>
+                  {% endif %}
+                </td>
+
+                <!-- Status Badge (Open=Blue, In Progress=Orange, Resolved=Green) -->
+                <td class="px-5 py-4 whitespace-nowrap">
+                  {% if ticket.status == 'Open' %}
+                    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold status-badge-open">
+                      <span class="w-1.5 h-1.5 rounded-full bg-blue-600"></span>
+                      <span>Open</span>
+                    </span>
+                  {% elif ticket.status == 'In Progress' %}
+                    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold status-badge-in-progress">
+                      <span class="w-1.5 h-1.5 rounded-full bg-amber-600 animate-pulse"></span>
+                      <span>In Progress</span>
+                    </span>
+                  {% elif ticket.status == 'Resolved' %}
+                    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold status-badge-resolved">
+                      <i data-lucide="check" class="w-3.5 h-3.5"></i>
+                      <span>Resolved</span>
+                    </span>
+                  {% else %}
+                    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium status-badge-closed">
+                      <span>Closed</span>
+                    </span>
+                  {% endif %}
+                </td>
+
+                <!-- Row action -->
+                <td class="px-5 py-4 whitespace-nowrap text-right text-xs">
+                  <span class="text-brand-600 font-semibold group-hover:translate-x-1 inline-flex items-center gap-1 transition-transform">
+                    <span>View</span>
+                    <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+                  </span>
+                </td>
+
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="7" class="px-6 py-12 text-center text-slate-500">
+                <div class="max-w-sm mx-auto text-center space-y-3">
+                  <div class="w-12 h-12 rounded-full bg-slate-100 text-slate-400 mx-auto flex items-center justify-center">
+                    <i data-lucide="search-x" class="w-6 h-6"></i>
+                  </div>
+                  <p class="font-semibold text-slate-800 text-sm">No tickets match your filter</p>
+                  <p class="text-xs text-slate-500">Try clearing the search query or submit a new ticket for your issue.</p>
+                  <a href="{{ url_for('submit_ticket') }}" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand-600 text-white text-xs font-semibold hover:bg-brand-700 transition-colors">
+                    <i data-lucide="plus-circle" class="w-4 h-4"></i>
+                    <span>Submit New Ticket</span>
+                  </a>
+                </div>
+              </td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+
+  <!-- HELPFUL TIPS FOR SCHOOL STAFF -->
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+    <div class="p-5 rounded-2xl bg-white border border-slate-200/80 shadow-sm flex items-start gap-4">
+      <div class="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+        <i data-lucide="zap" class="w-5 h-5"></i>
+      </div>
+      <div>
+        <h3 class="text-sm font-bold text-slate-900">Urgent Classroom Support</h3>
+        <p class="text-xs text-slate-500 mt-1 leading-relaxed">
+          For active classroom disruptions (smartboard, projector, or teacher logins), select <strong>Critical</strong> priority for immediate attention.
+        </p>
+      </div>
+    </div>
+
+    <div class="p-5 rounded-2xl bg-white border border-slate-200/80 shadow-sm flex items-start gap-4">
+      <div class="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+        <i data-lucide="refresh-cw" class="w-5 h-5"></i>
+      </div>
+      <div>
+        <h3 class="text-sm font-bold text-slate-900">Live Timeline Updates</h3>
+        <p class="text-xs text-slate-500 mt-1 leading-relaxed">
+          Click any ticket row to read the latest updates from Alex Reed and track testing status before release to staff.
+        </p>
+      </div>
+    </div>
+
+    <div class="p-5 rounded-2xl bg-white border border-slate-200/80 shadow-sm flex items-start gap-4">
+      <div class="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center shrink-0">
+        <i data-lucide="sparkles" class="w-5 h-5"></i>
+      </div>
+      <div>
+        <h3 class="text-sm font-bold text-slate-900">Feature Suggestions</h3>
+        <p class="text-xs text-slate-500 mt-1 leading-relaxed">
+          Have an idea for the school cooperative website? Choose <strong>New Feature Request</strong> to add it to the IT backlog.
+        </p>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

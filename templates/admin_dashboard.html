@@ -1,0 +1,456 @@
+{% extends "base.html" %}
+
+{% block title %}Solo IT Console | Oakridge Cooperative{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+  <!-- ADMIN HEADER BAR & CONTROLS -->
+  <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900 text-white p-6 rounded-2xl shadow-xl shadow-slate-900/10 border border-slate-800">
+    <div>
+      <div class="flex items-center gap-2">
+        <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-400/30 text-xs font-semibold uppercase tracking-wider">
+          <i data-lucide="shield" class="w-3.5 h-3.5"></i>
+          <span>Solo IT Developer Workspace</span>
+        </span>
+        <span class="text-xs text-slate-400">Oakridge School Cooperative</span>
+      </div>
+      <h1 class="text-2xl font-black tracking-tight mt-1.5 text-white flex items-center gap-2">
+        <span>Operations & Triage Command</span>
+      </h1>
+      <p class="text-xs sm:text-sm text-slate-300 mt-1 max-w-xl">
+        Manage bug reports, website feature deployments, and staff updates in one central workspace.
+      </p>
+    </div>
+
+    <!-- Toggle Kanban vs Master Table -->
+    <div class="flex flex-wrap items-center gap-2.5">
+      <div class="flex items-center bg-slate-800 p-1 rounded-xl border border-slate-700">
+        <a href="{{ url_for('index', view_mode='kanban', status=status_filter, priority=priority_filter, category=category_filter, q=search_query) }}" 
+           class="flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all {% if view_mode == 'kanban' %}bg-indigo-600 text-white shadow-md{% else %}text-slate-400 hover:text-white{% endif %}">
+          <i data-lucide="trello" class="w-4 h-4"></i>
+          <span>Kanban Board</span>
+        </a>
+        <a href="{{ url_for('index', view_mode='table', status=status_filter, priority=priority_filter, category=category_filter, q=search_query) }}" 
+           class="flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all {% if view_mode == 'table' %}bg-indigo-600 text-white shadow-md{% else %}text-slate-400 hover:text-white{% endif %}">
+          <i data-lucide="table-2" class="w-4 h-4"></i>
+          <span>Master Table</span>
+        </a>
+      </div>
+
+      <a href="{{ url_for('submit_ticket') }}" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200 border border-indigo-400/30 text-xs font-bold transition-colors">
+        <i data-lucide="plus" class="w-4 h-4"></i>
+        <span>New Ticket</span>
+      </a>
+    </div>
+  </div>
+
+  <!-- MASTER METRICS BAR -->
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+    
+    <!-- Total Active -->
+    <div class="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm relative overflow-hidden">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Total Active</p>
+          <p class="text-3xl font-black text-slate-900 mt-1">{{ metrics.active }}</p>
+          <p class="text-xs text-slate-400 mt-0.5">Requiring attention</p>
+        </div>
+        <div class="w-11 h-11 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center">
+          <i data-lucide="activity" class="w-5 h-5"></i>
+        </div>
+      </div>
+      {% if metrics.critical > 0 %}
+        <div class="mt-3 pt-2.5 border-t border-slate-100 flex items-center gap-1.5 text-xs text-rose-600 font-bold">
+          <span class="w-2 h-2 rounded-full bg-rose-600 animate-ping"></span>
+          <span>{{ metrics.critical }} Critical issue active!</span>
+        </div>
+      {% endif %}
+    </div>
+
+    <!-- Open Tickets -->
+    <div class="bg-white p-5 rounded-2xl border border-blue-200/80 shadow-sm relative overflow-hidden">
+      <div class="absolute top-0 left-0 right-0 h-1 bg-blue-500"></div>
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-[11px] font-bold uppercase tracking-wider text-blue-700">Open Backlog</p>
+          <p class="text-3xl font-black text-blue-900 mt-1">{{ metrics.open }}</p>
+          <p class="text-xs text-blue-600 mt-0.5">Awaiting triage</p>
+        </div>
+        <div class="w-11 h-11 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100">
+          <i data-lucide="circle-dot" class="w-5 h-5"></i>
+        </div>
+      </div>
+    </div>
+
+    <!-- In Progress -->
+    <div class="bg-white p-5 rounded-2xl border border-amber-200/80 shadow-sm relative overflow-hidden">
+      <div class="absolute top-0 left-0 right-0 h-1 bg-amber-500"></div>
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-[11px] font-bold uppercase tracking-wider text-amber-700">In Progress</p>
+          <p class="text-3xl font-black text-amber-900 mt-1">{{ metrics.in_progress }}</p>
+          <p class="text-xs text-amber-600 mt-0.5">Actively working</p>
+        </div>
+        <div class="w-11 h-11 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center border border-amber-100">
+          <i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i>
+        </div>
+      </div>
+    </div>
+
+    <!-- Resolved -->
+    <div class="bg-white p-5 rounded-2xl border border-emerald-200/80 shadow-sm relative overflow-hidden">
+      <div class="absolute top-0 left-0 right-0 h-1 bg-emerald-500"></div>
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-[11px] font-bold uppercase tracking-wider text-emerald-700">Resolved</p>
+          <p class="text-3xl font-black text-emerald-900 mt-1">{{ metrics.resolved }}</p>
+          <p class="text-xs text-emerald-600 mt-0.5">Fixed & verified</p>
+        </div>
+        <div class="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100">
+          <i data-lucide="check-circle" class="w-5 h-5"></i>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- FILTERS & SEARCH CONTROL BAR -->
+  <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
+    <form method="GET" action="{{ url_for('index') }}" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+      <input type="hidden" name="view_mode" value="{{ view_mode }}">
+
+      <!-- Search Keyword -->
+      <div class="relative lg:col-span-2">
+        <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2"></i>
+        <input type="text" name="q" value="{{ search_query }}" placeholder="Filter by ID, subject, staff name..." 
+               class="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm focus:ring-2 focus:ring-brand-500 focus:outline-none">
+      </div>
+
+      <!-- Status Filter -->
+      <div>
+        <select name="status" onchange="this.form.submit()" class="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm bg-white text-slate-700 focus:ring-2 focus:ring-brand-500 focus:outline-none">
+          <option value="all" {% if status_filter == 'all' %}selected{% endif %}>All Statuses</option>
+          <option value="open" {% if status_filter == 'open' %}selected{% endif %}>🔵 Open</option>
+          <option value="in_progress" {% if status_filter == 'in_progress' %}selected{% endif %}>🟠 In Progress</option>
+          <option value="resolved" {% if status_filter == 'resolved' %}selected{% endif %}>🟢 Resolved</option>
+          <option value="closed" {% if status_filter == 'closed' %}selected{% endif %}>⚪ Closed</option>
+        </select>
+      </div>
+
+      <!-- Priority Filter -->
+      <div>
+        <select name="priority" onchange="this.form.submit()" class="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm bg-white text-slate-700 focus:ring-2 focus:ring-brand-500 focus:outline-none">
+          <option value="all" {% if priority_filter == 'all' %}selected{% endif %}>All Priorities</option>
+          <option value="critical" {% if priority_filter == 'critical' %}selected{% endif %}>🚨 Critical</option>
+          <option value="high" {% if priority_filter == 'high' %}selected{% endif %}>High</option>
+          <option value="medium" {% if priority_filter == 'medium' %}selected{% endif %}>Medium</option>
+          <option value="low" {% if priority_filter == 'low' %}selected{% endif %}>Low</option>
+        </select>
+      </div>
+
+      <!-- Issue Category Filter -->
+      <div>
+        <select name="category" onchange="this.form.submit()" class="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm bg-white text-slate-700 focus:ring-2 focus:ring-brand-500 focus:outline-none">
+          <option value="all" {% if category_filter == 'all' %}selected{% endif %}>All Categories</option>
+          <option value="web_bug/error" {% if category_filter in ['web_bug/error', 'web_bug'] %}selected{% endif %}>Web Bug / Error</option>
+          <option value="new_feature_request" {% if category_filter in ['new_feature_request', 'feature'] %}selected{% endif %}>New Feature Request</option>
+          <option value="content_update" {% if category_filter in ['content_update', 'content'] %}selected{% endif %}>Content Update</option>
+          <option value="password/login_issue" {% if category_filter in ['password/login_issue', 'login'] %}selected{% endif %}>Password / Login</option>
+        </select>
+      </div>
+    </form>
+  </div>
+
+  <!-- VIEW MODE: KANBAN BOARD VIEW -->
+  {% if view_mode == 'kanban' %}
+    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
+      
+      <!-- COLUMN 1: OPEN -->
+      <div class="flex flex-col bg-slate-100/80 rounded-2xl border border-slate-200 p-4 min-h-[480px]">
+        <div class="flex items-center justify-between pb-3 mb-3 border-b border-slate-200">
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 rounded-full bg-blue-500"></span>
+            <h2 class="font-bold text-sm text-slate-900">Open Backlog</h2>
+          </div>
+          <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-700 border border-blue-200">
+            {{ kanban['Open']|length }}
+          </span>
+        </div>
+
+        <div class="space-y-3 flex-1 overflow-y-auto">
+          {% for t in kanban['Open'] %}
+            <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm hover:shadow-md hover:border-brand-400 transition-all cursor-pointer group" onclick="window.location='{{ url_for('ticket_detail', ticket_id=t.id) }}'">
+              <div class="flex items-center justify-between gap-2 mb-2">
+                <span class="font-mono text-xs font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
+                  {{ t.id }}
+                </span>
+                {% if t.priority == 'Critical' %}
+                  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                    <span class="w-1.5 h-1.5 rounded-full bg-rose-600 animate-pulse"></span> Critical
+                  </span>
+                {% else %}
+                  <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                    {{ t.priority }}
+                  </span>
+                {% endif %}
+              </div>
+
+              <h4 class="font-bold text-slate-900 text-sm group-hover:text-brand-600 transition-colors line-clamp-2">
+                {{ t.subject }}
+              </h4>
+
+              <p class="text-xs text-slate-500 mt-2 line-clamp-2 leading-relaxed">
+                {{ t.description }}
+              </p>
+
+              <div class="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
+                <span>{{ t.submitter_name }}</span>
+                <span>{{ t.created_at.split(' ')[0] }}</span>
+              </div>
+            </div>
+          {% else %}
+            <div class="h-32 border-2 border-dashed border-slate-200 rounded-xl flex items-center justify-center text-xs text-slate-400 font-medium">
+              No open tickets
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- COLUMN 2: IN PROGRESS -->
+      <div class="flex flex-col bg-slate-100/80 rounded-2xl border border-slate-200 p-4 min-h-[480px]">
+        <div class="flex items-center justify-between pb-3 mb-3 border-b border-slate-200">
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 rounded-full bg-amber-500 animate-pulse"></span>
+            <h2 class="font-bold text-sm text-slate-900">In Progress</h2>
+          </div>
+          <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-700 border border-amber-200">
+            {{ kanban['In Progress']|length }}
+          </span>
+        </div>
+
+        <div class="space-y-3 flex-1 overflow-y-auto">
+          {% for t in kanban['In Progress'] %}
+            <div class="bg-white rounded-xl p-4 border border-amber-200/80 shadow-sm hover:shadow-md hover:border-amber-400 transition-all cursor-pointer group" onclick="window.location='{{ url_for('ticket_detail', ticket_id=t.id) }}'">
+              <div class="flex items-center justify-between gap-2 mb-2">
+                <span class="font-mono text-xs font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
+                  {{ t.id }}
+                </span>
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">
+                  {{ t.priority }}
+                </span>
+              </div>
+
+              <h4 class="font-bold text-slate-900 text-sm group-hover:text-amber-700 transition-colors line-clamp-2">
+                {{ t.subject }}
+              </h4>
+
+              <p class="text-xs text-slate-500 mt-2 line-clamp-2 leading-relaxed">
+                {{ t.description }}
+              </p>
+
+              <div class="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
+                <span>{{ t.submitter_name }}</span>
+                <span class="text-amber-600 font-semibold flex items-center gap-1">
+                  <i data-lucide="clock" class="w-3 h-3"></i> Active
+                </span>
+              </div>
+            </div>
+          {% else %}
+            <div class="h-32 border-2 border-dashed border-slate-200 rounded-xl flex items-center justify-center text-xs text-slate-400 font-medium">
+              No tickets in progress
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- COLUMN 3: RESOLVED -->
+      <div class="flex flex-col bg-slate-100/80 rounded-2xl border border-slate-200 p-4 min-h-[480px]">
+        <div class="flex items-center justify-between pb-3 mb-3 border-b border-slate-200">
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 rounded-full bg-emerald-500"></span>
+            <h2 class="font-bold text-sm text-slate-900">Resolved</h2>
+          </div>
+          <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-700 border border-emerald-200">
+            {{ kanban['Resolved']|length }}
+          </span>
+        </div>
+
+        <div class="space-y-3 flex-1 overflow-y-auto">
+          {% for t in kanban['Resolved'] %}
+            <div class="bg-white rounded-xl p-4 border border-emerald-200/80 shadow-sm hover:shadow-md hover:border-emerald-400 transition-all cursor-pointer group" onclick="window.location='{{ url_for('ticket_detail', ticket_id=t.id) }}'">
+              <div class="flex items-center justify-between gap-2 mb-2">
+                <span class="font-mono text-xs font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
+                  {{ t.id }}
+                </span>
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  Resolved
+                </span>
+              </div>
+
+              <h4 class="font-bold text-slate-900 text-sm group-hover:text-emerald-700 transition-colors line-clamp-2">
+                {{ t.subject }}
+              </h4>
+
+              <p class="text-xs text-slate-500 mt-2 line-clamp-2 leading-relaxed">
+                {{ t.description }}
+              </p>
+
+              <div class="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
+                <span>{{ t.submitter_name }}</span>
+                <span class="text-emerald-600 font-semibold flex items-center gap-1">
+                  <i data-lucide="check" class="w-3 h-3"></i> Verified
+                </span>
+              </div>
+            </div>
+          {% else %}
+            <div class="h-32 border-2 border-dashed border-slate-200 rounded-xl flex items-center justify-center text-xs text-slate-400 font-medium">
+              No resolved tickets
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- COLUMN 4: CLOSED -->
+      <div class="flex flex-col bg-slate-100/80 rounded-2xl border border-slate-200 p-4 min-h-[480px]">
+        <div class="flex items-center justify-between pb-3 mb-3 border-b border-slate-200">
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 rounded-full bg-slate-400"></span>
+            <h2 class="font-bold text-sm text-slate-900">Archived / Closed</h2>
+          </div>
+          <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-slate-200 text-slate-700 border border-slate-300">
+            {{ kanban['Closed']|length }}
+          </span>
+        </div>
+
+        <div class="space-y-3 flex-1 overflow-y-auto">
+          {% for t in kanban['Closed'] %}
+            <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm opacity-80 hover:opacity-100 transition-opacity cursor-pointer group" onclick="window.location='{{ url_for('ticket_detail', ticket_id=t.id) }}'">
+              <div class="flex items-center justify-between gap-2 mb-2">
+                <span class="font-mono text-xs font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
+                  {{ t.id }}
+                </span>
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                  Closed
+                </span>
+              </div>
+
+              <h4 class="font-bold text-slate-800 text-sm group-hover:text-brand-600 transition-colors line-clamp-2">
+                {{ t.subject }}
+              </h4>
+
+              <div class="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
+                <span>{{ t.submitter_name }}</span>
+                <span>Archived</span>
+              </div>
+            </div>
+          {% else %}
+            <div class="h-32 border-2 border-dashed border-slate-200 rounded-xl flex items-center justify-center text-xs text-slate-400 font-medium">
+              No closed tickets
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+
+    </div>
+
+  <!-- VIEW MODE: MASTER DATA TABLE VIEW -->
+  {% else %}
+    <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-sm text-slate-600 divide-y divide-slate-200/80">
+          <thead class="bg-slate-50 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+            <tr>
+              <th scope="col" class="px-5 py-3.5">ID</th>
+              <th scope="col" class="px-5 py-3.5">Date</th>
+              <th scope="col" class="px-5 py-3.5">Submitter & Role</th>
+              <th scope="col" class="px-5 py-3.5">Subject</th>
+              <th scope="col" class="px-5 py-3.5">Category</th>
+              <th scope="col" class="px-5 py-3.5">Priority</th>
+              <th scope="col" class="px-5 py-3.5">Status</th>
+              <th scope="col" class="px-5 py-3.5 text-right">Quick Triage</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100 bg-white">
+            {% for ticket in tickets %}
+              <tr class="hover:bg-slate-50/80 transition-colors">
+                
+                <td class="px-5 py-4 whitespace-nowrap">
+                  <a href="{{ url_for('ticket_detail', ticket_id=ticket.id) }}" class="font-mono text-xs font-bold text-brand-700 bg-brand-50 hover:bg-brand-100 px-2.5 py-1 rounded-md border border-brand-200 transition-colors">
+                    {{ ticket.id }}
+                  </a>
+                </td>
+
+                <td class="px-5 py-4 whitespace-nowrap text-xs text-slate-500">
+                  {{ ticket.created_at }}
+                </td>
+
+                <td class="px-5 py-4 whitespace-nowrap">
+                  <p class="font-semibold text-slate-900 text-xs">{{ ticket.submitter_name }}</p>
+                  <p class="text-[11px] text-slate-400">{{ ticket.submitter_role }}</p>
+                </td>
+
+                <td class="px-5 py-4">
+                  <a href="{{ url_for('ticket_detail', ticket_id=ticket.id) }}" class="font-semibold text-slate-900 hover:text-brand-600 transition-colors text-sm line-clamp-1">
+                    {{ ticket.subject }}
+                  </a>
+                </td>
+
+                <td class="px-5 py-4 whitespace-nowrap">
+                  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-700">
+                    {{ ticket.issue_type }}
+                  </span>
+                </td>
+
+                <td class="px-5 py-4 whitespace-nowrap">
+                  {% if ticket.priority == 'Critical' %}
+                    <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                      <span class="w-1.5 h-1.5 rounded-full bg-rose-600 animate-pulse"></span> Critical
+                    </span>
+                  {% elif ticket.priority == 'High' %}
+                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-orange-100 text-orange-800">High</span>
+                  {% elif ticket.priority == 'Medium' %}
+                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">Medium</span>
+                  {% else %}
+                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">Low</span>
+                  {% endif %}
+                </td>
+
+                <td class="px-5 py-4 whitespace-nowrap">
+                  <form action="{{ url_for('update_status', ticket_id=ticket.id) }}" method="POST" class="inline">
+                    <select name="status" onchange="this.form.submit()" class="text-xs font-bold rounded-lg px-2.5 py-1 border 
+                      {% if ticket.status == 'Open' %}status-badge-open
+                      {% elif ticket.status == 'In Progress' %}status-badge-in-progress
+                      {% elif ticket.status == 'Resolved' %}status-badge-resolved
+                      {% else %}status-badge-closed{% endif %}">
+                      <option value="Open" {% if ticket.status == 'Open' %}selected{% endif %}>🔵 Open</option>
+                      <option value="In Progress" {% if ticket.status == 'In Progress' %}selected{% endif %}>🟠 In Progress</option>
+                      <option value="Resolved" {% if ticket.status == 'Resolved' %}selected{% endif %}>🟢 Resolved</option>
+                      <option value="Closed" {% if ticket.status == 'Closed' %}selected{% endif %}>⚪ Closed</option>
+                    </select>
+                  </form>
+                </td>
+
+                <td class="px-5 py-4 whitespace-nowrap text-right">
+                  <a href="{{ url_for('ticket_detail', ticket_id=ticket.id) }}" class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors">
+                    <span>Manage</span>
+                    <i data-lucide="chevron-right" class="w-3.5 h-3.5"></i>
+                  </a>
+                </td>
+
+              </tr>
+            {% else %}
+              <tr>
+                <td colspan="8" class="px-6 py-12 text-center text-slate-500">
+                  No tickets found matching the selected filters.
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  {% endif %}
+
+</div>
+{% endblock %}

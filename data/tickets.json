@@ -1,0 +1,162 @@
+[
+  {
+    "id": "TK-104",
+    "submitter_name": "Capt. Elena Rostova",
+    "submitter_email": "e.rostova@uc-metc.edu.ph",
+    "submitter_role": "Cadet Training & Deck Coordinator",
+    "issue_type": "Password/Login Issue",
+    "priority": "Critical",
+    "status": "Open",
+    "subject": "Cooperative Loan & Savings Portal session timeout during payroll submission",
+    "description": "Faculty members and maritime instructors are experiencing immediate session token expiration when attempting to submit dividend and loan verification forms on the cooperative portal. Instructors cannot complete clearance before Friday's deadline.",
+    "created_at": "2026-10-04 09:15",
+    "timeline": [
+      {
+        "timestamp": "2026-10-04 09:15",
+        "author": "Capt. Elena Rostova",
+        "role": "Staff",
+        "action": "Ticket Created",
+        "content": "Submitted ticket for urgent UC-METC portal token timeout issue.",
+        "is_internal": false
+      },
+      {
+        "timestamp": "2026-10-04 09:40",
+        "author": "Alex Reed (Solo IT Lead)",
+        "role": "IT Admin",
+        "action": "Developer Note",
+        "content": "Investigating authentication session expiry in auth_handler.py. Checking Redis session timeout limits for faculty accounts.",
+        "is_internal": true
+      }
+    ]
+  },
+  {
+    "id": "TK-103",
+    "submitter_name": "Engr. Marcus Vance",
+    "submitter_email": "m.vance@uc-metc.edu.ph",
+    "submitter_role": "Marine Engineering Chief Instructor",
+    "issue_type": "Web Bug/Error",
+    "priority": "High",
+    "status": "In Progress",
+    "subject": "Maritime Bridge Simulator reservation schedule throwing 500 error",
+    "description": "When instructors try to generate the simulator slot booking schedule spreadsheet from /reports/export-schedule, the server spins for 15 seconds and returns a 500 Internal Server Error. Need this resolved before cadet practical exams.",
+    "created_at": "2026-10-03 14:20",
+    "timeline": [
+      {
+        "timestamp": "2026-10-03 14:20",
+        "author": "Engr. Marcus Vance",
+        "role": "Staff",
+        "action": "Ticket Created",
+        "content": "Submitted bug report regarding simulator export failure.",
+        "is_internal": false
+      },
+      {
+        "timestamp": "2026-10-03 15:05",
+        "author": "Alex Reed (Solo IT Lead)",
+        "role": "IT Admin",
+        "action": "Status Changed",
+        "content": "Status updated from Open to In Progress.",
+        "is_internal": false
+      },
+      {
+        "timestamp": "2026-10-03 16:30",
+        "author": "Alex Reed (Solo IT Lead)",
+        "role": "IT Admin",
+        "action": "Developer Note",
+        "content": "Identified memory spike when sanitizing maritime cadet roster special characters. Working on the fix now.",
+        "is_internal": true
+      }
+    ]
+  },
+  {
+    "id": "TK-102",
+    "submitter_name": "Prof. Sarah Jenkins",
+    "submitter_email": "s.jenkins@uc-metc.edu.ph",
+    "submitter_role": "Coop Store & Services Committee",
+    "issue_type": "Content Update",
+    "priority": "Low",
+    "status": "In Progress",
+    "subject": "Update Q4 Cooperative cafeteria meal voucher & uniform allowance notice PDF",
+    "description": "Please replace the previous month cafeteria schedule on the cooperative community portal with the revised Q4 voucher guidelines and maritime uniform allowance notice.",
+    "created_at": "2026-10-02 11:00",
+    "timeline": [
+      {
+        "timestamp": "2026-10-02 11:00",
+        "author": "Prof. Sarah Jenkins",
+        "role": "Staff",
+        "action": "Ticket Created",
+        "content": "Submitted request for Q4 voucher PDF update.",
+        "is_internal": false
+      },
+      {
+        "timestamp": "2026-10-02 13:10",
+        "author": "Alex Reed (Solo IT Lead)",
+        "role": "IT Admin",
+        "action": "Status Changed",
+        "content": "Status updated from Open to In Progress.",
+        "is_internal": false
+      },
+      {
+        "timestamp": "2026-10-02 14:00",
+        "author": "Alex Reed (Solo IT Lead)",
+        "role": "IT Admin",
+        "action": "Public Update",
+        "content": "New PDF documents compressed and uploaded to UC-METC assets storage. Testing mobile download speed.",
+        "is_internal": false
+      }
+    ]
+  },
+  {
+    "id": "TK-101",
+    "submitter_name": "Devon Miller",
+    "submitter_email": "d.miller@uc-metc.edu.ph",
+    "submitter_role": "Maritime Cadet Affairs Coordinator",
+    "issue_type": "New Feature Request",
+    "priority": "Medium",
+    "status": "Resolved",
+    "subject": "Add maritime sea-duty pre-deployment requirement checklist",
+    "description": "Our cooperative members and graduating cadets requested a downloadable interactive pre-deployment checklist in the student portal navbar for sea-duty documentation.",
+    "created_at": "2026-09-28 10:30",
+    "timeline": [
+      {
+        "timestamp": "2026-09-28 10:30",
+        "author": "Devon Miller",
+        "role": "Staff",
+        "action": "Ticket Created",
+        "content": "Feature proposal submitted for cadet sea-duty checklist.",
+        "is_internal": false
+      },
+      {
+        "timestamp": "2026-09-29 09:00",
+        "author": "Alex Reed (Solo IT Lead)",
+        "role": "IT Admin",
+        "action": "Status Changed",
+        "content": "Status updated from Open to In Progress.",
+        "is_internal": false
+      },
+      {
+        "timestamp": "2026-10-01 16:45",
+        "author": "Alex Reed (Solo IT Lead)",
+        "role": "IT Admin",
+        "action": "Developer Note",
+        "content": "Built interactive checklist widget with automated PDF export. Deployed to production.",
+        "is_internal": false
+      },
+      {
+        "timestamp": "2026-10-02 10:00",
+        "author": "Alex Reed (Solo IT Lead)",
+        "role": "IT Admin",
+        "action": "Status Changed",
+        "content": "Status updated from In Progress to Resolved.",
+        "is_internal": false
+      },
+      {
+        "timestamp": "2026-10-02 10:05",
+        "author": "Devon Miller",
+        "role": "Staff",
+        "action": "Comment",
+        "content": "Tested on maritime lab workstations and mobile, works smoothly. Thank you Alex!",
+        "is_internal": false
+      }
+    ]
+  }
+]

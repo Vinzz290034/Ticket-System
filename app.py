@@ -847,19 +847,19 @@ def render_layout(title, content, user=None, flash_msg=None, flash_type="success
     avatar_char = user["name"][0] if user else "U"
 
     user_badge = f"""
-    <div class="flex items-center gap-2 sm:gap-3 bg-slate-100/90 pl-2 pr-2.5 py-1.5 rounded-2xl border border-slate-200 shadow-inner">
-      <div class="w-8 h-8 rounded-xl {'bg-purple-900 text-purple-200' if is_admin else 'bg-purple-700 text-white'} flex items-center justify-center font-bold text-xs shadow-sm">
+    <div class="flex items-center gap-1.5 sm:gap-2.5 bg-slate-100/90 pl-1.5 sm:pl-2 pr-2 sm:pr-2.5 py-1 sm:py-1.5 rounded-2xl border border-slate-200 shadow-inner shrink-0">
+      <div class="w-7 h-7 sm:w-8 sm:h-8 rounded-xl {'bg-purple-900 text-purple-200' if is_admin else 'bg-purple-700 text-white'} flex items-center justify-center font-bold text-xs shadow-sm shrink-0">
         {avatar_char}
       </div>
       <div class="text-left hidden md:block">
         <p class="text-xs font-bold text-slate-800 leading-tight">{user_name}</p>
         <p class="text-[10px] text-slate-500 font-medium">{user_role_label}</p>
       </div>
-      <a href="/settings" class="ml-1 p-1.5 rounded-lg text-slate-400 hover:text-purple-700 hover:bg-purple-50 transition-colors" title="Account & System Settings">
-        <i data-lucide="settings" class="w-4 h-4"></i>
+      <a href="/settings" class="p-1 sm:p-1.5 rounded-lg text-slate-400 hover:text-purple-700 hover:bg-purple-50 transition-colors" title="Account & System Settings">
+        <i data-lucide="settings" class="w-3.5 h-3.5 sm:w-4 sm:h-4"></i>
       </a>
-      <a href="/logout" class="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors" title="Sign Out">
-        <i data-lucide="log-out" class="w-4 h-4"></i>
+      <a href="/logout" class="p-1 sm:p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors" title="Sign Out">
+        <i data-lucide="log-out" class="w-3.5 h-3.5 sm:w-4 sm:h-4"></i>
       </a>
     </div>
     """
@@ -1073,28 +1073,34 @@ def render_layout(title, content, user=None, flash_msg=None, flash_type="success
   <!-- TOP HEADER WITH onIT SOLID PURPLE BRANDING & USER PROFILE -->
   <header class="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 shadow-sm transition-all">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-      <div class="flex items-center justify-between h-16 sm:h-20">
+      <div class="flex items-center justify-between h-16 sm:h-20 gap-2">
         
         <!-- onIT Brand Logo (Bespoke Ticket & Power Emblem) -->
-        <a href="/" class="flex items-center gap-3 group">
-          <div class="transition-transform duration-200 group-hover:scale-105">
-            {get_onit_logo_svg(42)}
+        <a href="/" class="flex items-center gap-2 sm:gap-3 group shrink-0 min-w-0">
+          <div class="transition-transform duration-200 group-hover:scale-105 shrink-0">
+            {get_onit_logo_svg(36, "sm:hidden")}
+            {get_onit_logo_svg(42, "hidden sm:block")}
           </div>
-          <div>
-            <div class="flex items-center gap-2">
-              <span class="font-black text-xl tracking-tight text-slate-900 group-hover:text-purple-700 transition-colors">
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5 sm:gap-2">
+              <span class="font-black text-lg sm:text-xl tracking-tight text-slate-900 group-hover:text-purple-700 transition-colors">
                 on<span class="text-purple-700">IT</span>
               </span>
-              <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200">
+              <span class="hidden sm:inline-flex text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200 whitespace-nowrap">
                 {ORG_NAME}
               </span>
+              <span class="inline-flex sm:hidden text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 whitespace-nowrap">
+                UC-METC
+              </span>
             </div>
-            <p class="text-xs text-slate-500 font-medium">Cooperative IT Desk &bull; Operations & Triage</p>
+            <p class="text-[11px] sm:text-xs text-slate-500 font-medium whitespace-nowrap">
+              IT Helpdesk <span class="hidden sm:inline">&bull; Operations & Triage</span>
+            </p>
           </div>
         </a>
 
         <!-- Right Side: User Profile -->
-        <div class="flex items-center gap-2 sm:gap-4">
+        <div class="flex items-center gap-2 sm:gap-4 shrink-0">
           {user_badge}
         </div>
 
@@ -1622,27 +1628,27 @@ def render_admin_dashboard(tickets, user, view_mode="kanban", status_f="all", pr
     return f"""
     <div class="space-y-6">
       <!-- HEADER CONSOLE -->
-      <div class="animate-entrance-1 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900 text-white p-6 rounded-3xl shadow-xl border border-slate-800">
+      <div class="animate-entrance-1 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900 text-white p-5 sm:p-6 rounded-3xl shadow-xl border border-slate-800">
         <div>
-          <div class="flex items-center gap-2">
-            <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-purple-900/60 text-purple-300 border border-purple-700/60 text-xs font-semibold uppercase tracking-wider">
-              <i data-lucide="shield" class="w-3.5 h-3.5 text-purple-400"></i>
+          <div class="flex flex-wrap items-center gap-1.5 sm:gap-2">
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-purple-900/60 text-purple-300 border border-purple-700/60 text-[10px] sm:text-xs font-semibold uppercase tracking-wider">
+              <i data-lucide="shield" class="w-3 h-3 sm:w-3.5 sm:h-3.5 text-purple-400"></i>
               <span>onIT Operations Command</span>
             </span>
-            <span class="text-xs text-slate-400">{ORG_NAME}</span>
+            <span class="hidden sm:inline text-xs text-slate-400">{ORG_NAME}</span>
           </div>
-          <h1 class="text-2xl font-black tracking-tight mt-1.5 text-white">Operations & Triage Console</h1>
+          <h1 class="text-xl sm:text-2xl font-black tracking-tight mt-1.5 text-white">Operations & Triage Console</h1>
           <p class="text-xs sm:text-sm text-slate-300 mt-1 max-w-xl">
             Logged in as <strong>{html.escape(user['name'])}</strong> &bull; Review incoming manager tickets, resolve system errors, and maintain cooperative IT uptime.
           </p>
         </div>
 
-        <div class="flex flex-wrap items-center gap-2.5">
+        <div class="flex flex-wrap items-center gap-2">
           <div class="flex items-center bg-slate-800 p-1 rounded-xl border border-slate-700">
-            <a href="/?view_mode=kanban&status={status_f}&priority={priority_f}&category={category_f}&q={search_q}" class="px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all {'bg-purple-700 text-white shadow-sm' if view_mode=='kanban' else 'text-slate-400 hover:text-white'}">
+            <a href="/?view_mode=kanban&status={status_f}&priority={priority_f}&category={category_f}&q={search_q}" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-all {'bg-purple-700 text-white shadow-sm' if view_mode=='kanban' else 'text-slate-400 hover:text-white'}">
               Kanban Board
             </a>
-            <a href="/?view_mode=table&status={status_f}&priority={priority_f}&category={category_f}&q={search_q}" class="px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all {'bg-purple-700 text-white shadow-sm' if view_mode=='table' else 'text-slate-400 hover:text-white'}">
+            <a href="/?view_mode=table&status={status_f}&priority={priority_f}&category={category_f}&q={search_q}" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-all {'bg-purple-700 text-white shadow-sm' if view_mode=='table' else 'text-slate-400 hover:text-white'}">
               Master Table
             </a>
           </div>

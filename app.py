@@ -1849,6 +1849,7 @@ def render_ticket_detail(ticket, user):
     comment_extra = '<label class="flex items-center gap-2 cursor-pointer select-none text-xs font-semibold text-slate-700"><input type="checkbox" name="is_internal" value="true" class="rounded border-slate-300 text-purple-700 w-4 h-4"><span class="flex items-center gap-1"><i data-lucide="lock" class="w-3.5 h-3.5 text-amber-600"></i><span>Make this an Internal Note (Visible only in IT view)</span></span></label>' if is_admin else '<span class="text-xs text-slate-400">Updates are posted directly to your IT Specialist.</span>'
 
     snippets = '<div class="hidden sm:flex items-center gap-1.5 text-xs"><span class="text-slate-400 text-[11px]">Quick snippets:</span><button type="button" onclick="document.getElementById(\'comment_box\').value=\'Working on the fix now. Testing across Chrome and mobile.\'" class="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] font-medium">Working on fix</button><button type="button" onclick="document.getElementById(\'comment_box\').value=\'Fixed the issue and verified in staging. Please test on your end.\'" class="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] font-medium">Fixed bug</button></div>' if is_admin else ''
+    comment_placeholder = "Type your developer update or internal fix progress (e.g., 'Working on the fix now' or 'Fixed the login page bug')..." if is_admin else "Add follow-up notes, additional details, or feedback for your IT Specialist..."
 
     return f"""
     <div class="space-y-6">
@@ -1916,7 +1917,7 @@ def render_ticket_detail(ticket, user):
                   {snippets}
                 </div>
 
-                <textarea id="comment_box" name="comment" rows="3" required placeholder="{'Type your developer update or internal fix progress (e.g., \'Working on the fix now\' or \'Fixed the login page bug\')...' if is_admin else 'Add follow-up notes, additional details, or feedback for your IT Specialist...'}"
+                <textarea id="comment_box" name="comment" rows="3" required placeholder="{comment_placeholder}"
                           class="w-full p-3.5 rounded-xl border border-slate-200 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-purple-700 bg-slate-50/50"></textarea>
 
                 <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">

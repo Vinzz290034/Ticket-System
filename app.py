@@ -7,7 +7,8 @@ import html
 from datetime import datetime
 from http import cookies
 
-PORT = 5000
+PORT = int(os.environ.get("PORT", 5000))
+HOST = os.environ.get("HOST", "0.0.0.0")
 DB_FILE = os.path.join(os.path.dirname(__file__), "data", "onit.db")
 
 # Organization and Website Branding
@@ -2625,10 +2626,10 @@ def main():
     print(f" onIT — IT Ticketing System")
     print(f" Organization: {ORG_NAME}")
     print(f" Database: SQLite 3 ({DB_FILE})")
-    print(f" Running on http://127.0.0.1:{PORT}/")
+    print(f" Running on http://{HOST}:{PORT}/ (Local: http://127.0.0.1:{PORT}/)")
     print(f"================================================================")
     init_db()
-    server = http.server.HTTPServer(("127.0.0.1", PORT), TicketServerHandler)
+    server = http.server.HTTPServer((HOST, PORT), TicketServerHandler)
     server.serve_forever()
 
 if __name__ == "__main__":

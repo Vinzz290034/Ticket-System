@@ -13,6 +13,18 @@
     </a>
 
     <div class="flex items-center gap-2">
+      {% if current_user and (ticket.submitter_username == current_user.username or (ticket.submitter_email == current_user.email and not ticket.submitter_username)) %}
+        <div class="flex items-center gap-1.5">
+          <a href="{{ url_for('edit_ticket', ticket_id=ticket.id) if url_for is defined else '/edit-ticket?id=' ~ ticket.id }}" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 text-xs font-bold transition-all shadow-xs" title="Edit this ticket">
+            <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
+            <span>Edit</span>
+          </a>
+          <button type="button" onclick="document.getElementById('deleteModal').classList.remove('hidden')" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold transition-all shadow-xs" title="Delete this ticket">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            <span>Delete</span>
+          </button>
+        </div>
+      {% endif %}
       <span class="font-mono text-xs font-bold text-slate-700 bg-white border border-slate-200 px-3 py-1 rounded-lg">
         Ticket {{ ticket.id }}
       </span>
@@ -35,11 +47,16 @@
         
         <!-- Category & Priority Tags -->
         <div class="flex flex-wrap items-center gap-2">
-          <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold
-            {% if ticket.issue_type == 'Web Bug/Error' %}bg-rose-50 text-rose-700 border border-rose-200
-            {% elif ticket.issue_type == 'New Feature Request' %}bg-purple-50 text-purple-700 border border-purple-200
-            {% elif ticket.issue_type == 'Content Update' %}bg-cyan-50 text-cyan-700 border border-cyan-200
-            {% else %}bg-amber-50 text-amber-700 border border-amber-200{% endif %}">
+          {% if ticket.issue_type == 'Web Bug/Error' %}
+            {% set issue_cls = 'bg-rose-50 text-rose-700 border border-rose-200' %}
+          {% elif ticket.issue_type == 'New Feature Request' %}
+            {% set issue_cls = 'bg-purple-50 text-purple-700 border border-purple-200' %}
+          {% elif ticket.issue_type == 'Content Update' %}
+            {% set issue_cls = 'bg-cyan-50 text-cyan-700 border border-cyan-200' %}
+          {% else %}
+            {% set issue_cls = 'bg-amber-50 text-amber-700 border border-amber-200' %}
+          {% endif %}
+          <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold {{ issue_cls }}">
             <span>{{ ticket.issue_type }}</span>
           </span>
 
@@ -62,11 +79,16 @@
             </span>
           {% endif %}
 
-          <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold
-            {% if ticket.status == 'Open' %}status-badge-open
-            {% elif ticket.status == 'In Progress' %}status-badge-in-progress
-            {% elif ticket.status == 'Resolved' %}status-badge-resolved
-            {% else %}status-badge-closed{% endif %}">
+          {% if ticket.status == 'Open' %}
+            {% set status_cls = 'status-badge-open' %}
+          {% elif ticket.status == 'In Progress' %}
+            {% set status_cls = 'status-badge-in-progress' %}
+          {% elif ticket.status == 'Resolved' %}
+            {% set status_cls = 'status-badge-resolved' %}
+          {% else %}
+            {% set status_cls = 'status-badge-closed' %}
+          {% endif %}
+          <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold {{ status_cls }}">
             <span>Status: {{ ticket.status }}</span>
           </span>
         </div>
@@ -90,9 +112,7 @@
         <!-- Detailed Description -->
         <div class="space-y-2 pt-2">
           <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Detailed Description</h3>
-          <div class="p-4 rounded-xl bg-slate-50/80 border border-slate-200/80 text-slate-700 text-sm leading-relaxed whitespace-pre-line">
-            {{ ticket.description }}
-          </div>
+          <div class="p-4 rounded-xl bg-slate-50/80 border border-slate-200/80 text-slate-700 text-sm leading-relaxed whitespace-pre-line">{{ ticket.description.strip() }}</div>
         </div>
 
       </div>
@@ -113,10 +133,14 @@
             {% if not event.is_internal or role == 'admin' %}
               <div class="relative flex items-start gap-4 text-xs sm:text-sm pl-1">
                 <!-- Marker Dot -->
-                <div class="w-7 h-7 rounded-full flex items-center justify-center shrink-0 z-10 
-                  {% if event.is_internal %}bg-amber-100 text-amber-800 border-2 border-amber-300
-                  {% elif event.role == 'IT Admin' %}bg-brand-100 text-brand-700 border-2 border-brand-300
-                  {% else %}bg-slate-100 text-slate-700 border-2 border-slate-300{% endif %}">
+                {% if event.is_internal %}
+                  {% set marker_cls = 'bg-amber-100 text-amber-800 border-2 border-amber-300' %}
+                {% elif event.role == 'IT Admin' %}
+                  {% set marker_cls = 'bg-brand-100 text-brand-700 border-2 border-brand-300' %}
+                {% else %}
+                  {% set marker_cls = 'bg-slate-100 text-slate-700 border-2 border-slate-300' %}
+                {% endif %}
+                <div class="w-7 h-7 rounded-full flex items-center justify-center shrink-0 z-10 {{ marker_cls }}">
                   {% if event.is_internal %}
                     <i data-lucide="lock" class="w-3.5 h-3.5"></i>
                   {% elif event.action == 'Ticket Created' %}
@@ -129,17 +153,24 @@
                 </div>
 
                 <!-- Event Content Card -->
-                <div class="flex-1 p-4 rounded-xl border transition-all
-                  {% if event.is_internal %}bg-amber-50/70 border-amber-200 text-amber-950
-                  {% elif event.role == 'IT Admin' %}bg-indigo-50/50 border-indigo-100 text-slate-800
-                  {% else %}bg-slate-50 border-slate-200 text-slate-800{% endif %}">
+                {% if event.is_internal %}
+                  {% set card_cls = 'bg-amber-50/70 border-amber-200 text-amber-950' %}
+                {% elif event.role == 'IT Admin' %}
+                  {% set card_cls = 'bg-indigo-50/50 border-indigo-100 text-slate-800' %}
+                {% else %}
+                  {% set card_cls = 'bg-slate-50 border-slate-200 text-slate-800' %}
+                {% endif %}
+                <div class="flex-1 p-4 rounded-xl border transition-all {{ card_cls }}">
                   
                   <div class="flex flex-wrap items-center justify-between gap-1 mb-1.5">
                     <div class="flex items-center gap-2">
                       <span class="font-bold text-slate-900">{{ event.author }}</span>
-                      <span class="text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full 
-                        {% if event.role == 'IT Admin' %}bg-brand-600 text-white
-                        {% else %}bg-slate-200 text-slate-700{% endif %}">
+                      {% if event.role == 'IT Admin' %}
+                        {% set role_badge_cls = 'bg-brand-600 text-white' %}
+                      {% else %}
+                        {% set role_badge_cls = 'bg-slate-200 text-slate-700' %}
+                      {% endif %}
+                      <span class="text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full {{ role_badge_cls }}">
                         {{ event.role }}
                       </span>
                       {% if event.is_internal %}
@@ -348,8 +379,29 @@
         </div>
       </div>
 
+  <!-- DELETE CONFIRMATION MODAL -->
+  <div id="deleteModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-md w-full p-6 space-y-4">
+      <div class="w-12 h-12 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
+        <i data-lucide="alert-triangle" class="w-6 h-6"></i>
+      </div>
+      <div class="text-center space-y-1.5">
+        <h3 class="text-lg font-bold text-slate-900">Delete Ticket {{ ticket.id }}?</h3>
+        <p class="text-xs sm:text-sm text-slate-500 leading-relaxed">
+          Are you sure you want to permanently delete ticket <strong>{{ ticket.id }}</strong>? All associated timeline logs and comments will also be deleted. <strong>This action cannot be undone.</strong>
+        </p>
+      </div>
+      <form action="{{ url_for('delete_ticket', ticket_id=ticket.id) if url_for is defined else '/delete-ticket' }}" method="POST" class="pt-2 flex items-center justify-end gap-3">
+        <input type="hidden" name="id" value="{{ ticket.id }}">
+        <button type="button" onclick="document.getElementById('deleteModal').classList.add('hidden')" class="px-4 py-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-bold transition-colors">
+          Cancel
+        </button>
+        <button type="submit" class="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-md shadow-rose-900/20 transition-all">
+          <i data-lucide="trash-2" class="w-4 h-4"></i>
+          <span>Yes, Delete Ticket</span>
+        </button>
+      </form>
     </div>
-
   </div>
 
 </div>

@@ -252,7 +252,8 @@ def init_db():
             subject TEXT NOT NULL,
             description TEXT NOT NULL,
             created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            submitter_username TEXT
         )
         """)
 
@@ -275,6 +276,24 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tickets_priority ON tickets(priority)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_timeline_ticket ON ticket_timeline(ticket_id)")
 
+        # Ensure submitter_username column exists in existing SQLite databases
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(tickets)")
+        cols = [r["name"] if isinstance(r, sqlite3.Row) else r[1] for r in cursor.fetchall()]
+        if "submitter_username" not in cols:
+            conn.execute("ALTER TABLE tickets ADD COLUMN submitter_username TEXT")
+            conn.execute("""
+            UPDATE tickets
+            SET submitter_username = (
+                SELECT username FROM users
+                WHERE LOWER(users.email) = LOWER(tickets.submitter_email)
+                   OR LOWER(users.name) = LOWER(tickets.submitter_name)
+                LIMIT 1
+            )
+            WHERE submitter_username IS NULL
+            """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tickets_submitter ON tickets(submitter_username)")
+
         # User Settings & Notification Preferences Table
         conn.execute("""
         CREATE TABLE IF NOT EXISTS user_settings (
@@ -287,7 +306,6 @@ def init_db():
         """)
 
         # Seed initial users if database is newly initialized
-        cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM users")
         if cursor.fetchone()[0] == 0:
             now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -307,9 +325,9 @@ def init_db():
 def seed_default_tickets(conn):
     for t in INITIAL_TICKETS:
         conn.execute("""
-        INSERT INTO tickets (id, submitter_name, submitter_email, submitter_role, issue_type, priority, status, subject, description, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (t["id"], t["submitter_name"], t["submitter_email"], t["submitter_role"], t["issue_type"], t["priority"], t["status"], t["subject"], t["description"], t["created_at"], t["created_at"]))
+        INSERT INTO tickets (id, submitter_name, submitter_email, submitter_role, issue_type, priority, status, subject, description, created_at, updated_at, submitter_username)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (t["id"], t["submitter_name"], t["submitter_email"], t["submitter_role"], t["issue_type"], t["priority"], t["status"], t["subject"], t["description"], t["created_at"], t["created_at"], "manager"))
         
         for ev in t["timeline"]:
             conn.execute("""
@@ -428,7 +446,7 @@ def format_time_12h(ts_str):
 def get_now_timestamp_12h():
     return datetime.now().strftime("%Y-%m-%d %I:%M %p")
 
-def insert_ticket(full_name, email, submitter_role, issue_type, priority, subject, description, submitter_is_admin=False):
+def insert_ticket(full_name, email, submitter_role, issue_type, priority, subject, description, submitter_username=None, submitter_is_admin=False):
     conn = get_db()
     with conn:
         cursor = conn.cursor()
@@ -445,9 +463,9 @@ def insert_ticket(full_name, email, submitter_role, issue_type, priority, subjec
         now_str = get_now_timestamp_12h()
 
         cursor.execute("""
-        INSERT INTO tickets (id, submitter_name, submitter_email, submitter_role, issue_type, priority, status, subject, description, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'Open', ?, ?, ?, ?)
-        """, (new_id, full_name, email, submitter_role, issue_type, priority, subject, description, now_str, now_str))
+        INSERT INTO tickets (id, submitter_name, submitter_email, submitter_role, issue_type, priority, status, subject, description, created_at, updated_at, submitter_username)
+        VALUES (?, ?, ?, ?, ?, ?, 'Open', ?, ?, ?, ?, ?)
+        """, (new_id, full_name, email, submitter_role, issue_type, priority, subject, description, now_str, now_str, submitter_username))
 
         timeline_role = "IT Specialist" if (submitter_is_admin or "IT" in str(submitter_role)) else "Manager"
         timeline_action = "Ticket Created" if submitter_is_admin else "Ticket Issued"
@@ -512,6 +530,52 @@ def add_ticket_comment_db(ticket_id, author, role_label, action, content, is_int
         INSERT INTO ticket_timeline (ticket_id, timestamp, author, role, action, content, is_internal)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (ticket_id, now_str, author, role_label, action, content, 1 if is_internal else 0))
+    conn.close()
+
+def is_ticket_creator(ticket, user):
+    if not ticket or not user:
+        return False
+    sub_user = (ticket.get("submitter_username") or "").strip()
+    cur_user = (user.get("username") or "").strip()
+    if sub_user and cur_user and sub_user.lower() == cur_user.lower():
+        return True
+
+    # Fallback to email/name check for legacy records where submitter_username may be null
+    sub_email = (ticket.get("submitter_email") or "").strip().lower()
+    cur_email = (user.get("email") or "").strip().lower()
+    sub_name = (ticket.get("submitter_name") or "").strip().lower()
+    cur_name = (user.get("name") or "").strip().lower()
+
+    if not sub_user:
+        if sub_email and cur_email and sub_email == cur_email:
+            return True
+        if sub_name and cur_name and sub_name == cur_name:
+            return True
+    return False
+
+def update_ticket_content_db(ticket_id, subject, description, issue_type, priority, editor_name="User", editor_role="Author"):
+    conn = get_db()
+    with conn:
+        cursor = conn.cursor()
+        now_str = get_now_timestamp_12h()
+        cursor.execute("""
+        UPDATE tickets
+        SET subject = ?, description = ?, issue_type = ?, priority = ?, updated_at = ?
+        WHERE id = ?
+        """, (subject, description, issue_type, priority, now_str, ticket_id))
+
+        cursor.execute("""
+        INSERT INTO ticket_timeline (ticket_id, timestamp, author, role, action, content, is_internal)
+        VALUES (?, ?, ?, ?, 'Ticket Edited', 'Ticket details (subject, description, or category/priority) were updated by the creator.', 0)
+        """, (ticket_id, now_str, editor_name, editor_role))
+    conn.close()
+
+def delete_ticket_db(ticket_id):
+    conn = get_db()
+    with conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM ticket_timeline WHERE ticket_id = ?", (ticket_id,))
+        cursor.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
     conn.close()
 
 def reset_db_data():
@@ -1310,12 +1374,18 @@ def render_manager_dashboard(tickets, user, search_q=""):
         filtered = [t for t in filtered if q in t["id"].lower() or q in t["subject"].lower() or q in t["description"].lower() or q in t["submitter_name"].lower()]
 
     for t in filtered:
+        is_mine = is_ticket_creator(t, user)
+        mine_tag = '<span class="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200">Yours</span>' if is_mine else ''
+        quick_actions = f'''<a href="/edit-ticket?id={t['id']}" onclick="event.stopPropagation()" class="p-1 rounded text-slate-400 hover:text-purple-700 hover:bg-purple-100 transition-colors" title="Edit your ticket"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i></a>''' if is_mine else ''
         rows.append(f"""
         <tr class="hover:bg-purple-50/40 transition-colors cursor-pointer group" onclick="window.location='/ticket?id={t['id']}'">
           <td class="px-5 py-4 whitespace-nowrap">
-            <span class="font-mono text-xs font-bold text-slate-900 bg-slate-100 px-2.5 py-1 rounded-md border border-slate-200 group-hover:border-purple-300 group-hover:bg-purple-50 group-hover:text-purple-700 transition-colors">
-              {html.escape(t['id'])}
-            </span>
+            <div class="flex items-center gap-1.5">
+              <span class="font-mono text-xs font-bold text-slate-900 bg-slate-100 px-2.5 py-1 rounded-md border border-slate-200 group-hover:border-purple-300 group-hover:bg-purple-50 group-hover:text-purple-700 transition-colors">
+                {html.escape(t['id'])}
+              </span>
+              {mine_tag}
+            </div>
           </td>
           <td class="px-5 py-4 whitespace-nowrap text-xs text-slate-500 font-mono">{format_time_12h(t['created_at'])}</td>
           <td class="px-5 py-4">
@@ -1328,10 +1398,13 @@ def render_manager_dashboard(tickets, user, search_q=""):
           <td class="px-5 py-4 whitespace-nowrap">{get_priority_badge(t['priority'])}</td>
           <td class="px-5 py-4 whitespace-nowrap">{get_status_badge(t['status'])}</td>
           <td class="px-5 py-4 whitespace-nowrap text-right text-xs">
-            <span class="text-purple-700 font-semibold group-hover:translate-x-1 inline-flex items-center gap-1 transition-transform">
-              <span>Track</span>
-              <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
-            </span>
+            <div class="flex items-center justify-end gap-2">
+              {quick_actions}
+              <span class="text-purple-700 font-semibold group-hover:translate-x-1 inline-flex items-center gap-1 transition-transform">
+                <span>Track</span>
+                <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+              </span>
+            </div>
           </td>
         </tr>
         """)
@@ -1499,10 +1572,15 @@ def render_admin_dashboard(tickets, user, view_mode="kanban", status_f="all", pr
                 return '<div class="h-32 border-2 border-dashed border-slate-200 rounded-xl flex items-center justify-center text-xs text-slate-400 font-medium">No tickets in this column</div>'
             cards = []
             for t in items:
+                is_mine = is_ticket_creator(t, user)
+                creator_badge = '<span class="text-[10px] font-bold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200">Yours</span>' if is_mine else ''
                 cards.append(f"""
                 <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm hover:shadow-md hover:border-purple-500 transition-all cursor-pointer group" onclick="window.location='/ticket?id={t['id']}'">
                   <div class="flex items-center justify-between gap-2 mb-2">
-                    <span class="font-mono text-xs font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">{t['id']}</span>
+                    <div class="flex items-center gap-1.5">
+                      <span class="font-mono text-xs font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">{t['id']}</span>
+                      {creator_badge}
+                    </div>
                     {get_priority_badge(t['priority'])}
                   </div>
                   <h4 class="font-bold text-slate-900 text-sm group-hover:text-purple-700 transition-colors line-clamp-2">{html.escape(t['subject'])}</h4>
@@ -1569,10 +1647,16 @@ def render_admin_dashboard(tickets, user, view_mode="kanban", status_f="all", pr
     else:
         table_rows = []
         for t in filtered:
+            is_mine = is_ticket_creator(t, user)
+            creator_badge = '<span class="text-[10px] font-bold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200">Yours</span>' if is_mine else ''
+            quick_edit = f'''<a href="/edit-ticket?id={t['id']}" class="p-1 rounded hover:bg-purple-100 text-slate-400 hover:text-purple-700 transition-colors" title="Edit your ticket"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i></a>''' if is_mine else ''
             table_rows.append(f"""
             <tr class="hover:bg-slate-50/80 transition-colors">
               <td class="px-5 py-4 whitespace-nowrap">
-                <a href="/ticket?id={t['id']}" class="font-mono text-xs font-bold text-purple-700 bg-purple-50 hover:bg-purple-100 px-2.5 py-1 rounded-md border border-purple-200">{t['id']}</a>
+                <div class="flex items-center gap-1.5">
+                  <a href="/ticket?id={t['id']}" class="font-mono text-xs font-bold text-purple-700 bg-purple-50 hover:bg-purple-100 px-2.5 py-1 rounded-md border border-purple-200">{t['id']}</a>
+                  {creator_badge}
+                </div>
               </td>
               <td class="px-5 py-4 whitespace-nowrap text-xs text-slate-500 font-mono">{format_time_12h(t['created_at'])}</td>
               <td class="px-5 py-4 whitespace-nowrap">
@@ -1596,7 +1680,10 @@ def render_admin_dashboard(tickets, user, view_mode="kanban", status_f="all", pr
                 </form>
               </td>
               <td class="px-5 py-4 whitespace-nowrap text-right">
-                <a href="/ticket?id={t['id']}" class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold">Manage &rarr;</a>
+                <div class="flex items-center justify-end gap-1.5">
+                  {quick_edit}
+                  <a href="/ticket?id={t['id']}" class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold">Manage &rarr;</a>
+                </div>
               </td>
             </tr>
             """)
@@ -1739,6 +1826,48 @@ def render_admin_dashboard(tickets, user, view_mode="kanban", status_f="all", pr
 
 def render_ticket_detail(ticket, user):
     is_admin = (user and user.get("role") == "admin")
+    is_creator = is_ticket_creator(ticket, user)
+
+    creator_actions_top = ""
+    delete_modal_html = ""
+    if is_creator:
+        creator_actions_top = f"""
+        <div class="flex items-center gap-1.5">
+          <a href="/edit-ticket?id={ticket['id']}" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 text-xs font-bold transition-all shadow-xs" title="Edit this ticket">
+            <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
+            <span>Edit</span>
+          </a>
+          <button type="button" onclick="document.getElementById('deleteModal').classList.remove('hidden')" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold transition-all shadow-xs" title="Delete this ticket">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            <span>Delete</span>
+          </button>
+        </div>
+        """
+        delete_modal_html = f"""
+        <div id="deleteModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div class="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-md w-full p-6 space-y-4 animate-entrance-1">
+            <div class="w-12 h-12 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
+              <i data-lucide="alert-triangle" class="w-6 h-6"></i>
+            </div>
+            <div class="text-center space-y-1.5">
+              <h3 class="text-lg font-bold text-slate-900">Delete Ticket {ticket['id']}?</h3>
+              <p class="text-xs sm:text-sm text-slate-500 leading-relaxed">
+                Are you sure you want to permanently delete ticket <strong>{ticket['id']}</strong>? All associated timeline logs and comments will also be permanently deleted. <strong>This action cannot be undone.</strong>
+              </p>
+            </div>
+            <form action="/delete-ticket" method="POST" class="pt-2 flex items-center justify-end gap-3">
+              <input type="hidden" name="id" value="{ticket['id']}">
+              <button type="button" onclick="document.getElementById('deleteModal').classList.add('hidden')" class="px-4 py-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-bold transition-colors">
+                Cancel
+              </button>
+              <button type="submit" class="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-md shadow-rose-900/20 transition-all">
+                <i data-lucide="trash-2" class="w-4 h-4"></i>
+                <span>Yes, Delete Ticket</span>
+              </button>
+            </form>
+          </div>
+        </div>
+        """
     
     events_html = []
     for ev in ticket.get("timeline", []):
@@ -1859,12 +1988,14 @@ def render_ticket_detail(ticket, user):
 
     return f"""
     <div class="space-y-6">
-      <div class="animate-entrance-1 flex items-center justify-between">
+      {delete_modal_html}
+      <div class="animate-entrance-1 flex flex-wrap items-center justify-between gap-3">
         <a href="/" class="inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-slate-500 hover:text-slate-800 transition-colors">
           <i data-lucide="arrow-left" class="w-4 h-4"></i>
           <span>Back to Dashboard</span>
         </a>
         <div class="flex items-center gap-2">
+          {creator_actions_top}
           <span class="font-mono text-xs font-bold text-slate-700 bg-white border border-slate-200 px-3 py-1 rounded-lg">Ticket {ticket['id']}</span>
           {('<span class="px-2.5 py-1 rounded-lg bg-purple-900 text-purple-200 text-xs font-bold border border-purple-700 flex items-center gap-1"><i data-lucide="shield" class="w-3.5 h-3.5 text-purple-400"></i> Admin Mode</span>') if is_admin else ''}
         </div>
@@ -1893,9 +2024,7 @@ def render_ticket_detail(ticket, user):
 
             <div class="space-y-2 pt-2">
               <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Detailed Description</h3>
-              <div class="p-4 rounded-xl bg-slate-50/80 border border-slate-200/80 text-slate-700 text-sm leading-relaxed whitespace-pre-line">
-                {html.escape(ticket['description'])}
-              </div>
+              <div class="p-4 rounded-xl bg-slate-50/80 border border-slate-200/80 text-slate-700 text-sm leading-relaxed whitespace-pre-line">{html.escape(ticket['description'].strip())}</div>
             </div>
           </div>
 
@@ -2051,6 +2180,100 @@ def render_submit_ticket_form(user):
             <button type="submit" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-purple-700 hover:bg-purple-800 text-white text-xs sm:text-sm font-bold shadow-md shadow-purple-900/20 transition-all">
               <i data-lucide="check" class="w-4 h-4"></i>
               <span>Assign Ticket to IT</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+    """
+
+def render_edit_ticket_form(ticket, user):
+    return f"""
+    <div class="max-w-3xl mx-auto space-y-6">
+      <div class="animate-entrance-1 flex items-center justify-between">
+        <a href="/ticket?id={ticket['id']}" class="inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-slate-500 hover:text-slate-800 transition-colors">
+          <i data-lucide="arrow-left" class="w-4 h-4"></i>
+          <span>Back to Ticket {ticket['id']}</span>
+        </a>
+        <span class="font-mono text-xs font-bold text-slate-700 bg-white border border-slate-200 px-3 py-1 rounded-lg">Editing {ticket['id']}</span>
+      </div>
+
+      <div class="animate-entrance-2 bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+        <div class="p-6 sm:p-8 bg-purple-700 text-white">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-purple-800 flex items-center justify-center text-white">
+              <i data-lucide="edit-3" class="w-6 h-6"></i>
+            </div>
+            <div>
+              <h1 class="text-xl sm:text-2xl font-black">Edit Ticket {ticket['id']}</h1>
+              <p class="text-xs sm:text-sm text-purple-200 mt-0.5">{ORG_NAME} &bull; Author Modifications</p>
+            </div>
+          </div>
+        </div>
+
+        <form action="/edit-ticket" method="POST" class="p-6 sm:p-8 space-y-6">
+          <input type="hidden" name="id" value="{ticket['id']}">
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label for="issue_type" class="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
+                Issue Type <span class="text-rose-500">*</span>
+              </label>
+              <div class="relative">
+                <select id="issue_type" name="issue_type" required
+                        class="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm appearance-none bg-slate-50/50 text-slate-800">
+                  <option value="Web Bug/Error" {'selected' if ticket['issue_type']=='Web Bug/Error' else ''}>Web Bug / Error</option>
+                  <option value="New Feature Request" {'selected' if ticket['issue_type']=='New Feature Request' else ''}>New Feature Request</option>
+                  <option value="Content Update" {'selected' if ticket['issue_type']=='Content Update' else ''}>Content Update</option>
+                  <option value="Password/Login Issue" {'selected' if ticket['issue_type']=='Password/Login Issue' else ''}>Password / Login Issue</option>
+                </select>
+                <i data-lucide="chevron-down" class="select-chevron w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+              </div>
+            </div>
+
+            <div>
+              <label for="priority" class="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
+                Priority Level <span class="text-rose-500">*</span>
+              </label>
+              <div class="relative">
+                <select id="priority" name="priority" required
+                        class="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm appearance-none bg-slate-50/50 text-slate-800">
+                  <option value="Low" {'selected' if ticket['priority']=='Low' else ''}>Low</option>
+                  <option value="Medium" {'selected' if ticket['priority']=='Medium' else ''}>Medium</option>
+                  <option value="High" {'selected' if ticket['priority']=='High' else ''}>High</option>
+                  <option value="Critical" {'selected' if ticket['priority']=='Critical' else ''}>Critical</option>
+                </select>
+                <i data-lucide="chevron-down" class="select-chevron w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label for="subject" class="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
+              Subject / Title <span class="text-rose-500">*</span>
+            </label>
+            <input type="text" id="subject" name="subject" required value="{html.escape(ticket['subject'])}" placeholder="Brief summary"
+                   class="input-field w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm bg-slate-50/50 text-slate-900 font-medium">
+          </div>
+
+          <div>
+            <label for="description" class="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
+              Detailed Description <span class="text-rose-500">*</span>
+            </label>
+            <textarea id="description" name="description" rows="6" required placeholder="Detailed description..."
+                      class="input-field w-full p-4 rounded-xl border border-slate-200 text-sm bg-slate-50/50 leading-relaxed text-slate-900 font-medium">{html.escape(ticket['description'])}</textarea>
+            <p class="text-[11px] text-slate-400 mt-1.5">
+              💡 As the ticket author, any edits made will be logged to the activity timeline.
+            </p>
+          </div>
+
+          <div class="pt-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <a href="/ticket?id={ticket['id']}" class="w-full sm:w-auto text-center px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:text-slate-900 text-xs sm:text-sm font-semibold">
+              Cancel
+            </a>
+            <button type="submit" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-purple-700 hover:bg-purple-800 text-white text-xs sm:text-sm font-bold shadow-md shadow-purple-900/20 transition-all">
+              <i data-lucide="check" class="w-4 h-4"></i>
+              <span>Save Changes</span>
             </button>
           </div>
         </form>
@@ -2436,19 +2659,38 @@ class TicketServerHandler(http.server.BaseHTTPRequestHandler):
             priority_f = query.get("priority", ["all"])[0]
             category_f = query.get("category", ["all"])[0]
             search_q = query.get("q", [""])[0].strip()
+            msg = query.get("msg", [None])[0]
+            m_type = query.get("type", ["success"])[0]
 
             if user["role"] == "admin":
                 content = render_admin_dashboard(tickets, user, view_mode, status_f, priority_f, category_f, search_q)
-                page_html = render_layout(f"{APP_NAME} | Operations Console &bull; {ORG_NAME}", content, user=user)
+                page_html = render_layout(f"{APP_NAME} | Operations Console &bull; {ORG_NAME}", content, user=user, flash_msg=msg, flash_type=m_type)
             else:
                 content = render_manager_dashboard(tickets, user, search_q)
-                page_html = render_layout(f"{APP_NAME} | Management Portal &bull; {ORG_NAME}", content, user=user)
+                page_html = render_layout(f"{APP_NAME} | Management Portal &bull; {ORG_NAME}", content, user=user, flash_msg=msg, flash_type=m_type)
             
             self.send_html_response(page_html)
 
         elif path == "/submit":
+            msg = query.get("msg", [None])[0]
+            m_type = query.get("type", ["success"])[0]
             content = render_submit_ticket_form(user)
-            page_html = render_layout(f"{APP_NAME} | Issue Ticket &bull; {ORG_NAME}", content, user=user)
+            page_html = render_layout(f"{APP_NAME} | Issue Ticket &bull; {ORG_NAME}", content, user=user, flash_msg=msg, flash_type=m_type)
+            self.send_html_response(page_html)
+
+        elif path == "/edit-ticket":
+            t_id = query.get("id", [""])[0]
+            ticket = get_ticket_from_db(t_id)
+            if not ticket:
+                self.send_redirect("/?msg=Ticket+not+found.&type=error")
+                return
+            if not is_ticket_creator(ticket, user):
+                self.send_redirect(f"/ticket?id={t_id}&msg=Access+denied.+Only+the+author+who+created+this+ticket+can+edit+it.&type=error")
+                return
+            msg = query.get("msg", [None])[0]
+            m_type = query.get("type", ["success"])[0]
+            content = render_edit_ticket_form(ticket, user)
+            page_html = render_layout(f"{APP_NAME} | Edit Ticket {ticket['id']}", content, user=user, flash_msg=msg, flash_type=m_type)
             self.send_html_response(page_html)
 
         elif path == "/settings":
@@ -2460,12 +2702,14 @@ class TicketServerHandler(http.server.BaseHTTPRequestHandler):
 
         elif path == "/ticket":
             t_id = query.get("id", [""])[0]
+            msg = query.get("msg", [None])[0]
+            m_type = query.get("type", ["success"])[0]
             ticket = get_ticket_from_db(t_id)
             if not ticket:
-                self.send_redirect("/")
+                self.send_redirect("/?msg=Ticket+not+found.&type=error")
                 return
             content = render_ticket_detail(ticket, user)
-            page_html = render_layout(f"{APP_NAME} - {ticket['id']}: {ticket['subject']}", content, user=user)
+            page_html = render_layout(f"{APP_NAME} - {ticket['id']}: {ticket['subject']}", content, user=user, flash_msg=msg, flash_type=m_type)
             self.send_html_response(page_html)
 
         else:
@@ -2516,11 +2760,51 @@ class TicketServerHandler(http.server.BaseHTTPRequestHandler):
                     priority=priority,
                     subject=subject,
                     description=description,
+                    submitter_username=user.get("username"),
                     submitter_is_admin=is_admin
                 )
-                self.send_redirect(f"/ticket?id={new_id}")
+                self.send_redirect(f"/ticket?id={new_id}&msg=Ticket+{new_id}+issued+successfully!&type=success")
                 return
-            self.send_redirect("/submit")
+            self.send_redirect("/submit?msg=Please+fill+in+all+required+fields.&type=error")
+
+        elif path == "/edit-ticket":
+            t_id = post_data.get("id", "").strip()
+            ticket = get_ticket_from_db(t_id)
+            if not ticket:
+                self.send_redirect("/?msg=Ticket+not+found.&type=error")
+                return
+            if not is_ticket_creator(ticket, user):
+                self.send_redirect(f"/ticket?id={t_id}&msg=Access+denied.+Only+the+author+who+created+this+ticket+can+edit+it.&type=error")
+                return
+
+            subject = post_data.get("subject", "").strip()
+            description = post_data.get("description", "").strip()
+            issue_type = post_data.get("issue_type", ticket.get("issue_type", "Web Bug/Error"))
+            priority = post_data.get("priority", ticket.get("priority", "Medium"))
+
+            if not subject or not description:
+                self.send_redirect(f"/edit-ticket?id={t_id}&msg=Subject+and+description+are+required.&type=error")
+                return
+
+            editor_name = user.get("name", "Author")
+            editor_role = user.get("role_title", "Author")
+            update_ticket_content_db(t_id, subject, description, issue_type, priority, editor_name=editor_name, editor_role=editor_role)
+            self.send_redirect(f"/ticket?id={t_id}&msg=Ticket+{t_id}+has+been+successfully+updated!&type=success")
+            return
+
+        elif path == "/delete-ticket":
+            t_id = post_data.get("id", "").strip()
+            ticket = get_ticket_from_db(t_id)
+            if not ticket:
+                self.send_redirect("/?msg=Ticket+not+found.&type=error")
+                return
+            if not is_ticket_creator(ticket, user):
+                self.send_redirect(f"/ticket?id={t_id}&msg=Access+denied.+Only+the+author+who+created+this+ticket+can+delete+it.&type=error")
+                return
+
+            delete_ticket_db(t_id)
+            self.send_redirect(f"/?msg=Ticket+{t_id}+has+been+permanently+deleted.&type=success")
+            return
 
         elif path == "/settings/profile":
             new_name = post_data.get("name", "").strip()

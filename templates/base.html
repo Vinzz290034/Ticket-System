@@ -176,10 +176,14 @@
       {% if messages %}
         <div class="space-y-2">
           {% for category, message in messages %}
-            <div class="flex items-center justify-between p-4 rounded-xl border text-sm font-medium transition-all shadow-sm
-              {% if category == 'success' %}bg-emerald-50 text-emerald-800 border-emerald-200
-              {% elif category == 'error' %}bg-rose-50 text-rose-800 border-rose-200
-              {% else %}bg-brand-50 text-brand-800 border-brand-200{% endif %}">
+            {% if category == 'success' %}
+              {% set flash_cls = 'bg-emerald-50 text-emerald-800 border-emerald-200' %}
+            {% elif category == 'error' %}
+              {% set flash_cls = 'bg-rose-50 text-rose-800 border-rose-200' %}
+            {% else %}
+              {% set flash_cls = 'bg-brand-50 text-brand-800 border-brand-200' %}
+            {% endif %}
+            <div class="flex items-center justify-between p-4 rounded-xl border text-sm font-medium transition-all shadow-sm {{ flash_cls }}">
               <div class="flex items-center gap-3">
                 {% if category == 'success' %}
                   <i data-lucide="check-circle" class="w-5 h-5 text-emerald-600 shrink-0"></i>
@@ -221,6 +225,7 @@
     </div>
   </footer>
 
+  {% block scripts %}{% endblock %}
   <script>
     lucide.createIcons();
   </script>

@@ -135,7 +135,7 @@
         <tbody class="divide-y divide-slate-100 bg-white">
           {% if tickets %}
             {% for ticket in tickets %}
-              <tr class="hover:bg-brand-50/40 transition-colors cursor-pointer group" onclick="window.location='{{ url_for('ticket_detail', ticket_id=ticket.id) }}'">
+              <tr class="hover:bg-brand-50/40 transition-colors cursor-pointer group" data-href="{{ url_for('ticket_detail', ticket_id=ticket.id) }}">
                 
                 <!-- Ticket ID -->
                 <td class="px-5 py-4 whitespace-nowrap">
@@ -163,11 +163,16 @@
 
                 <!-- Issue Type -->
                 <td class="px-5 py-4 whitespace-nowrap">
-                  <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium 
-                    {% if ticket.issue_type == 'Web Bug/Error' %}bg-rose-50 text-rose-700 border border-rose-200
-                    {% elif ticket.issue_type == 'New Feature Request' %}bg-purple-50 text-purple-700 border border-purple-200
-                    {% elif ticket.issue_type == 'Content Update' %}bg-cyan-50 text-cyan-700 border border-cyan-200
-                    {% else %}bg-amber-50 text-amber-700 border border-amber-200{% endif %}">
+                  {% if ticket.issue_type == 'Web Bug/Error' %}
+                    {% set type_cls = 'bg-rose-50 text-rose-700 border border-rose-200' %}
+                  {% elif ticket.issue_type == 'New Feature Request' %}
+                    {% set type_cls = 'bg-purple-50 text-purple-700 border border-purple-200' %}
+                  {% elif ticket.issue_type == 'Content Update' %}
+                    {% set type_cls = 'bg-cyan-50 text-cyan-700 border border-cyan-200' %}
+                  {% else %}
+                    {% set type_cls = 'bg-amber-50 text-amber-700 border border-amber-200' %}
+                  {% endif %}
+                  <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium {{ type_cls }}">
                     {% if ticket.issue_type == 'Web Bug/Error' %}
                       <i data-lucide="bug" class="w-3.5 h-3.5"></i>
                     {% elif ticket.issue_type == 'New Feature Request' %}
@@ -300,4 +305,14 @@
   </div>
 
 </div>
+
+{% block scripts %}
+<script>
+  document.querySelectorAll('[data-href]').forEach(function(el) {
+    el.addEventListener('click', function() {
+      window.location = this.dataset.href;
+    });
+  });
+</script>
+{% endblock %}
 {% endblock %}

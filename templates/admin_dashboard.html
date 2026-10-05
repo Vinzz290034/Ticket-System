@@ -180,7 +180,7 @@
 
         <div class="space-y-3 flex-1 overflow-y-auto">
           {% for t in kanban['Open'] %}
-            <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm hover:shadow-md hover:border-brand-400 transition-all cursor-pointer group" onclick="window.location='{{ url_for('ticket_detail', ticket_id=t.id) }}'">
+            <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm hover:shadow-md hover:border-brand-400 transition-all cursor-pointer group" data-href="{{ url_for('ticket_detail', ticket_id=t.id) }}">
               <div class="flex items-center justify-between gap-2 mb-2">
                 <span class="font-mono text-xs font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
                   {{ t.id }}
@@ -231,7 +231,7 @@
 
         <div class="space-y-3 flex-1 overflow-y-auto">
           {% for t in kanban['In Progress'] %}
-            <div class="bg-white rounded-xl p-4 border border-amber-200/80 shadow-sm hover:shadow-md hover:border-amber-400 transition-all cursor-pointer group" onclick="window.location='{{ url_for('ticket_detail', ticket_id=t.id) }}'">
+            <div class="bg-white rounded-xl p-4 border border-amber-200/80 shadow-sm hover:shadow-md hover:border-amber-400 transition-all cursor-pointer group" data-href="{{ url_for('ticket_detail', ticket_id=t.id) }}">
               <div class="flex items-center justify-between gap-2 mb-2">
                 <span class="font-mono text-xs font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
                   {{ t.id }}
@@ -278,7 +278,7 @@
 
         <div class="space-y-3 flex-1 overflow-y-auto">
           {% for t in kanban['Resolved'] %}
-            <div class="bg-white rounded-xl p-4 border border-emerald-200/80 shadow-sm hover:shadow-md hover:border-emerald-400 transition-all cursor-pointer group" onclick="window.location='{{ url_for('ticket_detail', ticket_id=t.id) }}'">
+            <div class="bg-white rounded-xl p-4 border border-emerald-200/80 shadow-sm hover:shadow-md hover:border-emerald-400 transition-all cursor-pointer group" data-href="{{ url_for('ticket_detail', ticket_id=t.id) }}">
               <div class="flex items-center justify-between gap-2 mb-2">
                 <span class="font-mono text-xs font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
                   {{ t.id }}
@@ -325,7 +325,7 @@
 
         <div class="space-y-3 flex-1 overflow-y-auto">
           {% for t in kanban['Closed'] %}
-            <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm opacity-80 hover:opacity-100 transition-opacity cursor-pointer group" onclick="window.location='{{ url_for('ticket_detail', ticket_id=t.id) }}'">
+            <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm opacity-80 hover:opacity-100 transition-opacity cursor-pointer group" data-href="{{ url_for('ticket_detail', ticket_id=t.id) }}">
               <div class="flex items-center justify-between gap-2 mb-2">
                 <span class="font-mono text-xs font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
                   {{ t.id }}
@@ -417,12 +417,17 @@
                 </td>
 
                 <td class="px-5 py-4 whitespace-nowrap">
+                  {% if ticket.status == 'Open' %}
+                    {% set status_cls = 'status-badge-open' %}
+                  {% elif ticket.status == 'In Progress' %}
+                    {% set status_cls = 'status-badge-in-progress' %}
+                  {% elif ticket.status == 'Resolved' %}
+                    {% set status_cls = 'status-badge-resolved' %}
+                  {% else %}
+                    {% set status_cls = 'status-badge-closed' %}
+                  {% endif %}
                   <form action="{{ url_for('update_status', ticket_id=ticket.id) }}" method="POST" class="inline">
-                    <select name="status" onchange="this.form.submit()" class="text-xs font-bold rounded-lg px-2.5 py-1 border 
-                      {% if ticket.status == 'Open' %}status-badge-open
-                      {% elif ticket.status == 'In Progress' %}status-badge-in-progress
-                      {% elif ticket.status == 'Resolved' %}status-badge-resolved
-                      {% else %}status-badge-closed{% endif %}">
+                    <select name="status" onchange="this.form.submit()" class="text-xs font-bold rounded-lg px-2.5 py-1 border {{ status_cls }}">
                       <option value="Open" {% if ticket.status == 'Open' %}selected{% endif %}>🔵 Open</option>
                       <option value="In Progress" {% if ticket.status == 'In Progress' %}selected{% endif %}>🟠 In Progress</option>
                       <option value="Resolved" {% if ticket.status == 'Resolved' %}selected{% endif %}>🟢 Resolved</option>
@@ -453,4 +458,14 @@
   {% endif %}
 
 </div>
+
+{% block scripts %}
+<script>
+  document.querySelectorAll('[data-href]').forEach(function(el) {
+    el.addEventListener('click', function() {
+      window.location = this.dataset.href;
+    });
+  });
+</script>
+{% endblock %}
 {% endblock %}

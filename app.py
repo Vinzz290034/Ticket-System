@@ -282,16 +282,28 @@ def init_db():
         cols = [r["name"] if isinstance(r, sqlite3.Row) else r[1] for r in cursor.fetchall()]
         if "submitter_username" not in cols:
             conn.execute("ALTER TABLE tickets ADD COLUMN submitter_username TEXT")
-            conn.execute("""
-            UPDATE tickets
-            SET submitter_username = (
-                SELECT username FROM users
-                WHERE LOWER(users.email) = LOWER(tickets.submitter_email)
-                   OR LOWER(users.name) = LOWER(tickets.submitter_name)
-                LIMIT 1
-            )
-            WHERE submitter_username IS NULL
-            """)
+        
+        # Priority 1: Match by submitter full name exactly to user full name
+        conn.execute("""
+        UPDATE tickets
+        SET submitter_username = (
+            SELECT username FROM users
+            WHERE LOWER(users.name) = LOWER(tickets.submitter_name)
+            LIMIT 1
+        )
+        WHERE submitter_name IN (SELECT name FROM users)
+        """)
+
+        # Priority 2: Fallback for any tickets still missing submitter_username by email
+        conn.execute("""
+        UPDATE tickets
+        SET submitter_username = (
+            SELECT username FROM users
+            WHERE LOWER(users.email) = LOWER(tickets.submitter_email)
+            LIMIT 1
+        )
+        WHERE submitter_username IS NULL OR submitter_username = ''
+        """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tickets_submitter ON tickets(submitter_username)")
 
         # User Settings & Notification Preferences Table
@@ -535,23 +547,27 @@ def add_ticket_comment_db(ticket_id, author, role_label, action, content, is_int
 def is_ticket_creator(ticket, user):
     if not ticket or not user:
         return False
-    sub_user = (ticket.get("submitter_username") or "").strip()
-    cur_user = (user.get("username") or "").strip()
-    if sub_user and cur_user and sub_user.lower() == cur_user.lower():
+    sub_user = (ticket.get("submitter_username") or "").strip().lower()
+    cur_user = (user.get("username") or "").strip().lower()
+    if sub_user and cur_user and sub_user == cur_user:
         return True
 
-    # Fallback to email/name check for legacy records where submitter_username may be null
-    sub_email = (ticket.get("submitter_email") or "").strip().lower()
-    cur_email = (user.get("email") or "").strip().lower()
+    # Fallback for legacy records: match author's display name
     sub_name = (ticket.get("submitter_name") or "").strip().lower()
     cur_name = (user.get("name") or "").strip().lower()
+    if sub_name and cur_name and sub_name == cur_name:
+        return True
 
-    if not sub_user:
-        if sub_email and cur_email and sub_email == cur_email:
-            return True
-        if sub_name and cur_name and sub_name == cur_name:
-            return True
+    # Fallback to email only if submitter_username is not set
+    sub_email = (ticket.get("submitter_email") or "").strip().lower()
+    cur_email = (user.get("email") or "").strip().lower()
+    if not sub_user and sub_email and cur_email and sub_email == cur_email:
+        return True
     return False
+
+def can_manage_ticket(ticket, user):
+    """Strict author-only permission: only the author who created the ticket can edit or delete it. No one else can."""
+    return is_ticket_creator(ticket, user)
 
 def update_ticket_content_db(ticket_id, subject, description, issue_type, priority, editor_name="User", editor_role="Author"):
     conn = get_db()
@@ -888,7 +904,12 @@ def render_login_page(error_msg=None):
 </body>
 </html>"""
 
-def render_layout(title, content, user=None, flash_msg=None, flash_type="success"):
+def render_layout(title, content, user=None, flash_msg=None, flash_type="success", modal_html=""):
+    if isinstance(content, tuple):
+        content, extracted_modal = content
+        if not modal_html:
+            modal_html = extracted_modal
+
     is_admin = (user and user.get("role") == "admin")
     
     flash_html = ""
@@ -956,7 +977,7 @@ def render_layout(title, content, user=None, flash_msg=None, flash_type="success
       }}
       100% {{
         opacity: 1;
-        transform: translateY(0);
+        transform: none;
       }}
     }}
     @keyframes entranceUp {{
@@ -966,7 +987,7 @@ def render_layout(title, content, user=None, flash_msg=None, flash_type="success
       }}
       100% {{
         opacity: 1;
-        transform: translateY(0);
+        transform: none;
       }}
     }}
     .animate-entrance-1 {{
@@ -988,7 +1009,7 @@ def render_layout(title, content, user=None, flash_msg=None, flash_type="success
       }}
       100% {{
         opacity: 1;
-        transform: translateY(0);
+        transform: none;
       }}
     }}
     .animate-page-entrance {{
@@ -1190,6 +1211,8 @@ def render_layout(title, content, user=None, flash_msg=None, flash_type="success
     </div>
   </footer>
 
+  {modal_html}
+
   <script>
     lucide.createIcons();
 
@@ -1337,6 +1360,8 @@ def render_layout(title, content, user=None, flash_msg=None, flash_type="success
           var card = c.closest('.animate-entrance-3, form');
           if (card) card.style.zIndex = '';
         }});
+        var delModal = document.getElementById('deleteModal');
+        if (delModal) delModal.classList.add('hidden');
       }}
     }});
 
@@ -1354,8 +1379,39 @@ def render_layout(title, content, user=None, flash_msg=None, flash_type="success
       lucide.createIcons();
     }}
 
-    document.addEventListener('DOMContentLoaded', initCustomDropdowns);
+    function hoistModals() {{
+      document.querySelectorAll('#deleteModal, [id$="Modal"]').forEach(function(m) {{
+        if (m.parentElement && m.parentElement !== document.body) {{
+          document.body.appendChild(m);
+        }}
+      }});
+    }}
+
+    function openDeleteModal() {{
+      var m = document.getElementById('deleteModal');
+      if (m) {{
+        if (m.parentElement !== document.body) {{
+          document.body.appendChild(m);
+        }}
+        m.classList.remove('hidden');
+        m.style.display = 'flex';
+      }}
+    }}
+
+    function closeDeleteModal() {{
+      var m = document.getElementById('deleteModal');
+      if (m) {{
+        m.classList.add('hidden');
+        m.style.display = 'none';
+      }}
+    }}
+
+    document.addEventListener('DOMContentLoaded', function() {{
+      initCustomDropdowns();
+      hoistModals();
+    }});
     initCustomDropdowns();
+    hoistModals();
   </script>
 </body>
 </html>"""
@@ -1648,8 +1704,9 @@ def render_admin_dashboard(tickets, user, view_mode="kanban", status_f="all", pr
         table_rows = []
         for t in filtered:
             is_mine = is_ticket_creator(t, user)
+            can_manage = can_manage_ticket(t, user)
             creator_badge = '<span class="text-[10px] font-bold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200">Yours</span>' if is_mine else ''
-            quick_edit = f'''<a href="/edit-ticket?id={t['id']}" class="p-1 rounded hover:bg-purple-100 text-slate-400 hover:text-purple-700 transition-colors" title="Edit your ticket"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i></a>''' if is_mine else ''
+            quick_edit = f'''<a href="/edit-ticket?id={t['id']}" class="p-1 rounded hover:bg-purple-100 text-slate-400 hover:text-purple-700 transition-colors" title="Edit ticket"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i></a>''' if can_manage else ''
             table_rows.append(f"""
             <tr class="hover:bg-slate-50/80 transition-colors">
               <td class="px-5 py-4 whitespace-nowrap">
@@ -1826,26 +1883,26 @@ def render_admin_dashboard(tickets, user, view_mode="kanban", status_f="all", pr
 
 def render_ticket_detail(ticket, user):
     is_admin = (user and user.get("role") == "admin")
-    is_creator = is_ticket_creator(ticket, user)
+    can_manage = can_manage_ticket(ticket, user)
 
     creator_actions_top = ""
     delete_modal_html = ""
-    if is_creator:
+    if can_manage:
         creator_actions_top = f"""
         <div class="flex items-center gap-1.5">
           <a href="/edit-ticket?id={ticket['id']}" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 text-xs font-bold transition-all shadow-xs" title="Edit this ticket">
             <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
             <span>Edit</span>
           </a>
-          <button type="button" onclick="document.getElementById('deleteModal').classList.remove('hidden')" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold transition-all shadow-xs" title="Delete this ticket">
+          <button type="button" onclick="openDeleteModal()" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold transition-all shadow-xs cursor-pointer" title="Delete this ticket">
             <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
             <span>Delete</span>
           </button>
         </div>
         """
         delete_modal_html = f"""
-        <div id="deleteModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-          <div class="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-md w-full p-6 space-y-4 animate-entrance-1">
+        <div id="deleteModal" onclick="if(event.target===this)closeDeleteModal()" class="hidden fixed inset-0 z-[99999] flex items-center justify-center p-4 backdrop-blur-md bg-slate-900/10 pointer-events-auto transition-all" style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; width: 100vw; height: 100vh; z-index: 99999; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);">
+          <div class="bg-white rounded-2xl border border-slate-200/90 shadow-[0_25px_60px_-15px_rgba(15,23,42,0.35)] max-w-md w-full p-6 space-y-4 my-auto animate-entrance-1" onclick="event.stopPropagation()">
             <div class="w-12 h-12 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
               <i data-lucide="alert-triangle" class="w-6 h-6"></i>
             </div>
@@ -1857,10 +1914,10 @@ def render_ticket_detail(ticket, user):
             </div>
             <form action="/delete-ticket" method="POST" class="pt-2 flex items-center justify-end gap-3">
               <input type="hidden" name="id" value="{ticket['id']}">
-              <button type="button" onclick="document.getElementById('deleteModal').classList.add('hidden')" class="px-4 py-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-bold transition-colors">
+              <button type="button" onclick="closeDeleteModal()" class="px-4 py-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-bold transition-colors cursor-pointer">
                 Cancel
               </button>
-              <button type="submit" class="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-md shadow-rose-900/20 transition-all">
+              <button type="submit" class="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-md shadow-rose-900/20 transition-all cursor-pointer">
                 <i data-lucide="trash-2" class="w-4 h-4"></i>
                 <span>Yes, Delete Ticket</span>
               </button>
@@ -1986,9 +2043,8 @@ def render_ticket_detail(ticket, user):
     snippets = '<div class="hidden sm:flex items-center gap-1.5 text-xs"><span class="text-slate-400 text-[11px]">Quick snippets:</span><button type="button" onclick="document.getElementById(\'comment_box\').value=\'Working on the fix now. Testing across Chrome and mobile.\'" class="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] font-medium">Working on fix</button><button type="button" onclick="document.getElementById(\'comment_box\').value=\'Fixed the issue and verified in staging. Please test on your end.\'" class="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] font-medium">Fixed bug</button></div>' if is_admin else ''
     comment_placeholder = "Type your developer update or internal fix progress (e.g., 'Working on the fix now' or 'Fixed the login page bug')..." if is_admin else "Add follow-up notes, additional details, or feedback for your IT Specialist..."
 
-    return f"""
+    main_body = f"""
     <div class="space-y-6">
-      {delete_modal_html}
       <div class="animate-entrance-1 flex flex-wrap items-center justify-between gap-3">
         <a href="/" class="inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-slate-500 hover:text-slate-800 transition-colors">
           <i data-lucide="arrow-left" class="w-4 h-4"></i>
@@ -2082,6 +2138,7 @@ def render_ticket_detail(ticket, user):
       </div>
     </div>
     """
+    return (main_body, delete_modal_html)
 
 def render_submit_ticket_form(user):
     default_name = html.escape(user["name"]) if user else ""
@@ -2684,7 +2741,7 @@ class TicketServerHandler(http.server.BaseHTTPRequestHandler):
             if not ticket:
                 self.send_redirect("/?msg=Ticket+not+found.&type=error")
                 return
-            if not is_ticket_creator(ticket, user):
+            if not can_manage_ticket(ticket, user):
                 self.send_redirect(f"/ticket?id={t_id}&msg=Access+denied.+Only+the+author+who+created+this+ticket+can+edit+it.&type=error")
                 return
             msg = query.get("msg", [None])[0]
@@ -2773,7 +2830,7 @@ class TicketServerHandler(http.server.BaseHTTPRequestHandler):
             if not ticket:
                 self.send_redirect("/?msg=Ticket+not+found.&type=error")
                 return
-            if not is_ticket_creator(ticket, user):
+            if not can_manage_ticket(ticket, user):
                 self.send_redirect(f"/ticket?id={t_id}&msg=Access+denied.+Only+the+author+who+created+this+ticket+can+edit+it.&type=error")
                 return
 
@@ -2798,7 +2855,7 @@ class TicketServerHandler(http.server.BaseHTTPRequestHandler):
             if not ticket:
                 self.send_redirect("/?msg=Ticket+not+found.&type=error")
                 return
-            if not is_ticket_creator(ticket, user):
+            if not can_manage_ticket(ticket, user):
                 self.send_redirect(f"/ticket?id={t_id}&msg=Access+denied.+Only+the+author+who+created+this+ticket+can+delete+it.&type=error")
                 return
 

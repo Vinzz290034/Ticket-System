@@ -130,7 +130,7 @@
         <!-- Timeline Items -->
         <div class="space-y-4 relative before:absolute before:inset-0 before:left-3.5 before:w-0.5 before:bg-slate-200">
           {% for event in ticket.timeline %}
-            {% if not event.is_internal or role == 'admin' %}
+            {% if (not event.is_internal or role == 'admin') and event.author != 'System Dispatch' and event.action != 'Resolution Dispatched' %}
               <div class="relative flex items-start gap-4 text-xs sm:text-sm pl-1">
                 <!-- Marker Dot -->
                 {% if event.is_internal %}

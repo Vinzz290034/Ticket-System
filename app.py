@@ -305,6 +305,9 @@ def init_db():
         WHERE submitter_username IS NULL OR submitter_username = ''
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tickets_submitter ON tickets(submitter_username)")
+        
+        # Clean up any automated system dispatch notifications from timeline
+        conn.execute("DELETE FROM ticket_timeline WHERE author = 'System Dispatch' OR action = 'Resolution Dispatched'")
 
         # User Settings & Notification Preferences Table
         conn.execute("""
@@ -505,15 +508,6 @@ def update_ticket_status_db(ticket_id, new_status, author="IT Specialist"):
             INSERT INTO ticket_timeline (ticket_id, timestamp, author, role, action, content, is_internal)
             VALUES (?, ?, ?, 'IT Specialist', 'Status Changed', ?, 0)
             """, (ticket_id, now_str, author, f"Status updated from '{old_status}' to '{new_status}'."))
-
-            if new_status == "Resolved":
-                cursor.execute("SELECT resolution_updates FROM user_settings WHERE username = 'it'")
-                us_row = cursor.fetchone()
-                if not us_row or us_row["resolution_updates"]:
-                    cursor.execute("""
-                    INSERT INTO ticket_timeline (ticket_id, timestamp, author, role, action, content, is_internal)
-                    VALUES (?, ?, 'System Dispatch', 'IT Alert', 'Resolution Dispatched', 'Automated resolution notification dispatched to Cooperative Management.', 0)
-                    """, (ticket_id, now_str))
     conn.close()
 
 def update_ticket_priority_db(ticket_id, new_priority, author="IT Specialist"):
@@ -1928,6 +1922,8 @@ def render_ticket_detail(ticket, user):
     
     events_html = []
     for ev in ticket.get("timeline", []):
+        if ev.get("author") == "System Dispatch" or ev.get("action") == "Resolution Dispatched":
+            continue
         if not ev.get("is_internal") or is_admin:
             is_int = bool(ev.get("is_internal", 0))
             is_it_role = ev.get("role") in ["IT Admin", "IT Specialist"] or "IT" in str(ev.get("role", ""))

@@ -5,7 +5,7 @@ import os
 import sys
 import html
 import io
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from http import cookies
 
 PORT = int(os.environ.get("PORT", 5000))
@@ -15,6 +15,18 @@ DB_FILE = os.path.join(os.path.dirname(__file__), "data", "onit.db")
 # Organization and Website Branding
 APP_NAME = "onIT"
 ORG_NAME = "UC-METC Multipurpose Cooperative"
+
+# Organization Timezone Configuration (Philippine Standard Time, UTC+8 by default)
+TZ_OFFSET_HOURS = int(os.environ.get("TIMEZONE_OFFSET", "8"))
+ORGANIZATION_TIMEZONE = timezone(timedelta(hours=TZ_OFFSET_HOURS))
+
+def get_now_datetime():
+    """Returns current datetime in organization timezone (UTC+8 Philippine Standard Time)."""
+    return datetime.now(ORGANIZATION_TIMEZONE)
+
+def get_now_timestamp_12h():
+    """Returns formatted 12-hour timestamp string in organization timezone."""
+    return get_now_datetime().strftime("%Y-%m-%d %I:%M %p")
 
 # Official Accounts: Manager (Issues tickets) and IT (Solves tickets)
 INITIAL_USERS = [
@@ -323,7 +335,7 @@ def init_db():
         # Seed initial users if database is newly initialized
         cursor.execute("SELECT COUNT(*) FROM users")
         if cursor.fetchone()[0] == 0:
-            now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+            now_str = get_now_timestamp_12h()
             for u in INITIAL_USERS:
                 conn.execute("""
                 INSERT INTO users (username, password, name, email, role, role_title, department, created_at)
@@ -331,6 +343,57 @@ def init_db():
                 """, (u["username"], u["password"], u["name"], u["email"], u["role"], u["role_title"], u["department"], now_str))
         else:
             conn.execute("UPDATE users SET role_title = 'IT Lead & System Developer' WHERE role = 'admin'")
+
+        # One-time migration for cloud server deployments where the host machine clock
+        # ran in UTC (0 offset), causing past timestamps to be 8 hours behind Philippine Standard Time (UTC+8).
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS system_config (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+        """)
+        cursor.execute("SELECT value FROM system_config WHERE key = 'timezone_migration_v1'")
+        migrated = cursor.fetchone()
+        if not migrated:
+            host_offset = datetime.now().astimezone().utcoffset() or timedelta(0)
+            target_offset = timedelta(hours=TZ_OFFSET_HOURS)
+            needed_shift_seconds = int((target_offset - host_offset).total_seconds())
+            shift_hours = needed_shift_seconds // 3600
+
+            force_shift = os.environ.get("FORCE_TIMEZONE_SHIFT_HOURS")
+            if force_shift is not None:
+                shift_hours = int(force_shift)
+
+            if shift_hours != 0:
+                def _shift_str(val):
+                    if not val:
+                        return val
+                    s = str(val).strip()
+                    for fmt in ("%Y-%m-%d %I:%M %p", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
+                        try:
+                            dt = datetime.strptime(s, fmt)
+                            return (dt + timedelta(hours=shift_hours)).strftime("%Y-%m-%d %I:%M %p")
+                        except ValueError:
+                            pass
+                    return val
+
+                cursor.execute("SELECT id, created_at, updated_at FROM tickets")
+                for row in cursor.fetchall():
+                    new_created = _shift_str(row["created_at"])
+                    new_updated = _shift_str(row["updated_at"])
+                    cursor.execute("UPDATE tickets SET created_at = ?, updated_at = ? WHERE id = ?", (new_created, new_updated, row["id"]))
+
+                cursor.execute("SELECT id, timestamp FROM ticket_timeline")
+                for row in cursor.fetchall():
+                    new_ts = _shift_str(row["timestamp"])
+                    cursor.execute("UPDATE ticket_timeline SET timestamp = ? WHERE id = ?", (new_ts, row["id"]))
+
+                cursor.execute("SELECT username, created_at FROM users")
+                for row in cursor.fetchall():
+                    new_ts = _shift_str(row["created_at"])
+                    cursor.execute("UPDATE users SET created_at = ? WHERE username = ?", (new_ts, row["username"]))
+
+            cursor.execute("INSERT OR REPLACE INTO system_config (key, value) VALUES ('timezone_migration_v1', 'done')")
 
         # Database ready for real tickets created by user
         pass
@@ -448,18 +511,22 @@ def format_time_12h(ts_str):
     if not ts_str:
         return ""
     ts_str = str(ts_str).strip()
-    if "AM" in ts_str or "PM" in ts_str:
+    if (" AM" in ts_str or " PM" in ts_str) and len(ts_str.split()) == 3:
         return ts_str
-    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
+    try:
+        dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(ORGANIZATION_TIMEZONE)
+        return dt.strftime("%Y-%m-%d %I:%M %p")
+    except Exception:
+        pass
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %I:%M %p"):
         try:
             dt = datetime.strptime(ts_str, fmt)
             return dt.strftime("%Y-%m-%d %I:%M %p")
         except ValueError:
             pass
     return ts_str
-
-def get_now_timestamp_12h():
-    return datetime.now().strftime("%Y-%m-%d %I:%M %p")
 
 def insert_ticket(full_name, email, submitter_role, issue_type, priority, subject, description, submitter_username=None, submitter_is_admin=False):
     conn = get_db()
@@ -1200,7 +1267,7 @@ def render_layout(title, content, user=None, flash_msg=None, flash_type="success
         <span><strong>onIT</strong> &bull; Official IT Helpdesk of {ORG_NAME}</span>
       </div>
       <div>
-        <span>&copy; {datetime.now().year} {ORG_NAME}. All rights reserved.</span>
+        <span>&copy; {get_now_datetime().year} {ORG_NAME}. All rights reserved.</span>
       </div>
     </div>
   </footer>

@@ -5,8 +5,47 @@ import os
 import sys
 import html
 import io
+import json
 from datetime import datetime, timezone, timedelta
 from http import cookies
+
+def parse_attachments(att_val):
+    """
+    Parses attachment column value from database or form input.
+    Returns a list of Data URL strings.
+    Handles:
+    - None or empty string -> []
+    - JSON array string '["data:image/...", ...]' -> [str, ...]
+    - Legacy single Data URL string 'data:image/...' -> [str]
+    - Python list of strings -> [str, ...]
+    """
+    if not att_val:
+        return []
+    if isinstance(att_val, list):
+        return [str(x).strip() for x in att_val if str(x).strip()]
+    att_str = str(att_val).strip()
+    if not att_str or att_str in ("[]", '""', "''", "null"):
+        return []
+    if att_str.startswith("[") and att_str.endswith("]"):
+        try:
+            parsed = json.loads(att_str)
+            if isinstance(parsed, list):
+                return [str(x).strip() for x in parsed if str(x).strip()]
+        except Exception:
+            pass
+    return [att_str]
+
+def serialize_attachments(att_val):
+    """
+    Serializes attachments to store in SQLite TEXT column.
+    If empty list, returns None.
+    If multiple or single items, returns JSON array string e.g. '["data:..."]'.
+    """
+    items = parse_attachments(att_val)
+    if not items:
+        return None
+    return json.dumps(items)
+
 
 PORT = int(os.environ.get("PORT", 5000))
 HOST = os.environ.get("HOST", "0.0.0.0")
@@ -265,7 +304,8 @@ def init_db():
             description TEXT NOT NULL,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
-            submitter_username TEXT
+            submitter_username TEXT,
+            attachment TEXT
         )
         """)
 
@@ -280,6 +320,7 @@ def init_db():
             action TEXT NOT NULL,
             content TEXT NOT NULL,
             is_internal INTEGER NOT NULL DEFAULT 0,
+            attachment TEXT,
             FOREIGN KEY (ticket_id) REFERENCES tickets (id) ON DELETE CASCADE
         )
         """)
@@ -288,12 +329,19 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tickets_priority ON tickets(priority)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_timeline_ticket ON ticket_timeline(ticket_id)")
 
-        # Ensure submitter_username column exists in existing SQLite databases
+        # Ensure submitter_username and attachment columns exist in existing SQLite databases
         cursor = conn.cursor()
         cursor.execute("PRAGMA table_info(tickets)")
         cols = [r["name"] if isinstance(r, sqlite3.Row) else r[1] for r in cursor.fetchall()]
         if "submitter_username" not in cols:
             conn.execute("ALTER TABLE tickets ADD COLUMN submitter_username TEXT")
+        if "attachment" not in cols:
+            conn.execute("ALTER TABLE tickets ADD COLUMN attachment TEXT")
+
+        cursor.execute("PRAGMA table_info(ticket_timeline)")
+        tl_cols = [r["name"] if isinstance(r, sqlite3.Row) else r[1] for r in cursor.fetchall()]
+        if "attachment" not in tl_cols:
+            conn.execute("ALTER TABLE ticket_timeline ADD COLUMN attachment TEXT")
         
         # Priority 1: Match by submitter full name exactly to user full name
         conn.execute("""
@@ -528,7 +576,7 @@ def format_time_12h(ts_str):
             pass
     return ts_str
 
-def insert_ticket(full_name, email, submitter_role, issue_type, priority, subject, description, submitter_username=None, submitter_is_admin=False):
+def insert_ticket(full_name, email, submitter_role, issue_type, priority, subject, description, submitter_username=None, submitter_is_admin=False, attachment=None):
     conn = get_db()
     with conn:
         cursor = conn.cursor()
@@ -543,20 +591,21 @@ def insert_ticket(full_name, email, submitter_role, issue_type, priority, subjec
         next_num = max(nums, default=100) + 1
         new_id = f"TK-{next_num}"
         now_str = get_now_timestamp_12h()
+        serialized_att = serialize_attachments(attachment)
 
         cursor.execute("""
-        INSERT INTO tickets (id, submitter_name, submitter_email, submitter_role, issue_type, priority, status, subject, description, created_at, updated_at, submitter_username)
-        VALUES (?, ?, ?, ?, ?, ?, 'Open', ?, ?, ?, ?, ?)
-        """, (new_id, full_name, email, submitter_role, issue_type, priority, subject, description, now_str, now_str, submitter_username))
+        INSERT INTO tickets (id, submitter_name, submitter_email, submitter_role, issue_type, priority, status, subject, description, created_at, updated_at, submitter_username, attachment)
+        VALUES (?, ?, ?, ?, ?, ?, 'Open', ?, ?, ?, ?, ?, ?)
+        """, (new_id, full_name, email, submitter_role, issue_type, priority, subject, description, now_str, now_str, submitter_username, serialized_att))
 
         timeline_role = "IT Specialist" if (submitter_is_admin or "IT" in str(submitter_role)) else "Manager"
         timeline_action = "Ticket Created" if submitter_is_admin else "Ticket Issued"
         timeline_content = f"New ticket logged: {subject}" if submitter_is_admin else f"New ticket issued to IT: {subject}"
 
         cursor.execute("""
-        INSERT INTO ticket_timeline (ticket_id, timestamp, author, role, action, content, is_internal)
-        VALUES (?, ?, ?, ?, ?, ?, 0)
-        """, (new_id, now_str, full_name, timeline_role, timeline_action, timeline_content))
+        INSERT INTO ticket_timeline (ticket_id, timestamp, author, role, action, content, is_internal, attachment)
+        VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+        """, (new_id, now_str, full_name, timeline_role, timeline_action, timeline_content, serialized_att))
 
     conn.close()
     return new_id
@@ -593,16 +642,17 @@ def update_ticket_priority_db(ticket_id, new_priority, author="IT Specialist"):
             """, (ticket_id, now_str, author, f"Priority re-classified from '{old_priority}' to '{new_priority}'."))
     conn.close()
 
-def add_ticket_comment_db(ticket_id, author, role_label, action, content, is_internal):
+def add_ticket_comment_db(ticket_id, author, role_label, action, content, is_internal, attachment=None):
     conn = get_db()
     with conn:
         cursor = conn.cursor()
         now_str = get_now_timestamp_12h()
+        serialized_att = serialize_attachments(attachment)
         cursor.execute("UPDATE tickets SET updated_at = ? WHERE id = ?", (now_str, ticket_id))
         cursor.execute("""
-        INSERT INTO ticket_timeline (ticket_id, timestamp, author, role, action, content, is_internal)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (ticket_id, now_str, author, role_label, action, content, 1 if is_internal else 0))
+        INSERT INTO ticket_timeline (ticket_id, timestamp, author, role, action, content, is_internal, attachment)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (ticket_id, now_str, author, role_label, action, content, 1 if is_internal else 0, serialized_att))
     conn.close()
 
 def is_ticket_creator(ticket, user):
@@ -630,16 +680,30 @@ def can_manage_ticket(ticket, user):
     """Strict author-only permission: only the author who created the ticket can edit or delete it. No one else can."""
     return is_ticket_creator(ticket, user)
 
-def update_ticket_content_db(ticket_id, subject, description, issue_type, priority, editor_name="User", editor_role="Author"):
+def update_ticket_content_db(ticket_id, subject, description, issue_type, priority, editor_name="User", editor_role="Author", attachment=None, remove_attachment=False):
     conn = get_db()
     with conn:
         cursor = conn.cursor()
         now_str = get_now_timestamp_12h()
-        cursor.execute("""
-        UPDATE tickets
-        SET subject = ?, description = ?, issue_type = ?, priority = ?, updated_at = ?
-        WHERE id = ?
-        """, (subject, description, issue_type, priority, now_str, ticket_id))
+        serialized_att = serialize_attachments(attachment) if attachment is not None else None
+        if remove_attachment or (attachment is not None and not serialized_att):
+            cursor.execute("""
+            UPDATE tickets
+            SET subject = ?, description = ?, issue_type = ?, priority = ?, updated_at = ?, attachment = NULL
+            WHERE id = ?
+            """, (subject, description, issue_type, priority, now_str, ticket_id))
+        elif serialized_att:
+            cursor.execute("""
+            UPDATE tickets
+            SET subject = ?, description = ?, issue_type = ?, priority = ?, updated_at = ?, attachment = ?
+            WHERE id = ?
+            """, (subject, description, issue_type, priority, now_str, serialized_att, ticket_id))
+        else:
+            cursor.execute("""
+            UPDATE tickets
+            SET subject = ?, description = ?, issue_type = ?, priority = ?, updated_at = ?
+            WHERE id = ?
+            """, (subject, description, issue_type, priority, now_str, ticket_id))
 
         cursor.execute("""
         INSERT INTO ticket_timeline (ticket_id, timestamp, author, role, action, content, is_internal)
@@ -1213,6 +1277,311 @@ def render_layout(title, content, user=None, flash_msg=None, flash_type="success
       transform: translateX(1.25rem);
     }}
   </style>
+
+  <script>
+    var currentLightboxGallery = [];
+    var currentLightboxIndex = 0;
+
+    function openLightbox(src, gallery, index) {{
+      var modal = document.getElementById('imageLightboxModal');
+      var img = document.getElementById('lightboxImg');
+      var dl = document.getElementById('lightboxDownloadBtn');
+      var counter = document.getElementById('lightboxCounter');
+      var prevBtn = document.getElementById('lightboxPrevBtn');
+      var nextBtn = document.getElementById('lightboxNextBtn');
+
+      if (Array.isArray(gallery) && gallery.length > 0) {{
+        currentLightboxGallery = gallery;
+        currentLightboxIndex = (typeof index === 'number' && index >= 0 && index < gallery.length) ? index : gallery.indexOf(src);
+        if (currentLightboxIndex < 0) currentLightboxIndex = 0;
+      }} else {{
+        currentLightboxGallery = src ? [src] : [];
+        currentLightboxIndex = 0;
+      }}
+
+      var activeSrc = currentLightboxGallery[currentLightboxIndex] || src;
+      if (img) img.src = activeSrc;
+      if (dl) dl.href = activeSrc;
+
+      if (currentLightboxGallery.length > 1) {{
+        if (counter) {{
+          counter.textContent = (currentLightboxIndex + 1) + ' of ' + currentLightboxGallery.length;
+          counter.classList.remove('hidden');
+          counter.style.display = 'inline-block';
+        }}
+        if (prevBtn) {{
+          prevBtn.classList.remove('hidden');
+          prevBtn.style.display = 'flex';
+        }}
+        if (nextBtn) {{
+          nextBtn.classList.remove('hidden');
+          nextBtn.style.display = 'flex';
+        }}
+      }} else {{
+        if (counter) {{
+          counter.classList.add('hidden');
+          counter.style.display = 'none';
+        }}
+        if (prevBtn) {{
+          prevBtn.classList.add('hidden');
+          prevBtn.style.display = 'none';
+        }}
+        if (nextBtn) {{
+          nextBtn.classList.add('hidden');
+          nextBtn.style.display = 'none';
+        }}
+      }}
+
+      if (modal) {{
+        modal.classList.remove('hidden');
+        modal.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+      }}
+    }}
+
+    function navigateLightbox(direction) {{
+      if (!currentLightboxGallery || currentLightboxGallery.length <= 1) return;
+      currentLightboxIndex = (currentLightboxIndex + direction + currentLightboxGallery.length) % currentLightboxGallery.length;
+      var nextSrc = currentLightboxGallery[currentLightboxIndex];
+      var img = document.getElementById('lightboxImg');
+      var dl = document.getElementById('lightboxDownloadBtn');
+      var counter = document.getElementById('lightboxCounter');
+      if (img) img.src = nextSrc;
+      if (dl) dl.href = nextSrc;
+      if (counter) counter.textContent = (currentLightboxIndex + 1) + ' of ' + currentLightboxGallery.length;
+    }}
+
+    function closeLightbox() {{
+      var modal = document.getElementById('imageLightboxModal');
+      if (modal) {{
+        modal.classList.add('hidden');
+        modal.style.display = 'none';
+        document.body.style.overflow = '';
+      }}
+    }}
+
+    function compressImageFile(file, callback) {{
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function(e) {{
+        var img = new Image();
+        img.onload = function() {{
+          var canvas = document.createElement('canvas');
+          var MAX_WIDTH = 1600;
+          var MAX_HEIGHT = 1600;
+          var width = img.width;
+          var height = img.height;
+          if (width > height) {{
+            if (width > MAX_WIDTH) {{
+              height = Math.round((height * MAX_WIDTH) / width);
+              width = MAX_WIDTH;
+            }}
+          }} else {{
+            if (height > MAX_HEIGHT) {{
+              width = Math.round((width * MAX_HEIGHT) / height);
+              height = MAX_HEIGHT;
+            }}
+          }}
+          canvas.width = width;
+          canvas.height = height;
+          var ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          var dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+          var estKb = Math.round((dataUrl.length * 3 / 4) / 1024);
+          if (callback) {{
+            callback({{
+              dataUrl: dataUrl,
+              name: file.name || 'Screenshot',
+              sizeKb: estKb
+            }});
+          }}
+        }};
+        img.onerror = function() {{
+          alert('Could not process this file as an image. Please ensure it is a valid PNG, JPG, or WebP.');
+        }};
+        img.src = e.target.result;
+      }};
+      reader.onerror = function() {{
+        alert('Could not read the selected file.');
+      }};
+      reader.readAsDataURL(file);
+    }}
+
+    function createAttachmentManager(config) {{
+      var items = [];
+      function getInput() {{ return document.getElementById(config.inputId); }}
+      function getGrid() {{ return document.getElementById(config.gridId); }}
+      function getCounter() {{ return config.counterId ? document.getElementById(config.counterId) : null; }}
+
+      function syncInput() {{
+        var input = getInput();
+        var counter = getCounter();
+        if (input) {{
+          var urls = items.map(function(item) {{ return item.dataUrl; }});
+          input.value = urls.length > 0 ? JSON.stringify(urls) : '';
+        }}
+        if (counter) {{
+          if (items.length === 0) {{
+            counter.textContent = '';
+            counter.classList.add('hidden');
+            counter.style.display = 'none';
+          }} else {{
+            counter.textContent = items.length + (items.length === 1 ? ' image staged' : ' images staged') + ' • click any to enlarge';
+            counter.classList.remove('hidden');
+            counter.style.display = 'inline-block';
+          }}
+        }}
+      }}
+
+      function renderGrid() {{
+        var grid = getGrid();
+        if (!grid) return;
+        grid.innerHTML = '';
+        if (items.length === 0) {{
+          grid.classList.add('hidden');
+          grid.style.display = 'none';
+          syncInput();
+          return;
+        }}
+        grid.classList.remove('hidden');
+        grid.style.display = 'grid';
+
+        var allUrls = items.map(function(x) {{ return x.dataUrl; }});
+
+        items.forEach(function(item, idx) {{
+          var card = document.createElement('div');
+          card.className = 'relative group rounded-xl border border-purple-200 bg-white p-2 shadow-xs hover:border-purple-400 hover:shadow-sm transition-all flex flex-col justify-between';
+
+          var imgWrap = document.createElement('div');
+          imgWrap.className = 'relative w-full h-24 rounded-lg overflow-hidden bg-slate-100 cursor-pointer flex items-center justify-center';
+          imgWrap.onclick = function() {{
+            openLightbox(item.dataUrl, allUrls, idx);
+          }};
+
+          var img = document.createElement('img');
+          img.src = item.dataUrl;
+          img.alt = item.name || 'Attachment';
+          img.className = 'w-full h-full object-cover group-hover:scale-105 transition-transform duration-200';
+
+          var hoverOverlay = document.createElement('div');
+          hoverOverlay.className = 'absolute inset-0 bg-slate-900/0 group-hover:bg-slate-900/30 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100';
+          hoverOverlay.innerHTML = '<span class="p-1 rounded-full bg-slate-900/80 text-white text-xs"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg></span>';
+
+          imgWrap.appendChild(img);
+          imgWrap.appendChild(hoverOverlay);
+
+          var metaRow = document.createElement('div');
+          metaRow.className = 'mt-1.5 flex items-center justify-between gap-1 text-[11px] text-slate-600';
+
+          var textCol = document.createElement('div');
+          textCol.className = 'min-w-0 flex-1 pr-1';
+
+          var nameSpan = document.createElement('p');
+          nameSpan.className = 'truncate font-bold text-slate-800 text-[11px]';
+          nameSpan.title = item.name;
+          nameSpan.textContent = item.name;
+
+          var sizeSpan = document.createElement('p');
+          sizeSpan.className = 'text-[10px] text-purple-700 font-semibold';
+          sizeSpan.textContent = '~' + item.sizeKb + ' KB';
+
+          textCol.appendChild(nameSpan);
+          textCol.appendChild(sizeSpan);
+
+          var delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.className = 'text-rose-500 hover:text-rose-700 hover:bg-rose-50 p-1 rounded-lg transition-colors cursor-pointer shrink-0';
+          delBtn.title = 'Remove this image';
+          delBtn.innerHTML = '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>';
+          delBtn.onclick = function(e) {{
+            e.stopPropagation();
+            removeItem(item.id);
+          }};
+
+          metaRow.appendChild(textCol);
+          metaRow.appendChild(delBtn);
+
+          card.appendChild(imgWrap);
+          card.appendChild(metaRow);
+          grid.appendChild(card);
+        }});
+
+        syncInput();
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+      }}
+
+      function addItem(dataUrl, name, sizeKb) {{
+        items.push({{
+          id: 'att_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+          dataUrl: dataUrl,
+          name: name || ('Image ' + (items.length + 1)),
+          sizeKb: sizeKb || Math.round((dataUrl.length * 3 / 4) / 1024)
+        }});
+        renderGrid();
+      }}
+
+      function removeItem(id) {{
+        items = items.filter(function(x) {{ return x.id !== id; }});
+        renderGrid();
+      }}
+
+      function handleFiles(files) {{
+        if (!files || !files.length) return;
+        Array.from(files).forEach(function(file) {{
+          if (file.type && file.type.indexOf('image') === -1) {{
+            alert('File "' + (file.name || 'selected') + '" is not an image. Please attach PNG, JPG, or WebP files.');
+            return;
+          }}
+          compressImageFile(file, function(res) {{
+            addItem(res.dataUrl, res.name, res.sizeKb);
+          }});
+        }});
+      }}
+
+      if (config.initialUrls && Array.isArray(config.initialUrls)) {{
+        config.initialUrls.forEach(function(url, i) {{
+          if (url) {{
+            addItem(url, 'Attached Image ' + (i + 1), Math.round((url.length * 3 / 4) / 1024));
+          }}
+        }});
+      }}
+
+      return {{
+        addItem: addItem,
+        removeItem: removeItem,
+        handleFiles: handleFiles,
+        getItems: function() {{ return items; }},
+        clear: function() {{ items = []; renderGrid(); }}
+      }};
+    }}
+
+    function compressAndStageImage(file, targetInputId, previewCardId, previewImgId, nameId, sizeId, dropzoneId) {{
+      compressImageFile(file, function(res) {{
+        var input = document.getElementById(targetInputId);
+        if (input) input.value = res.dataUrl;
+
+        var prevCard = document.getElementById(previewCardId);
+        var prevImg = document.getElementById(previewImgId);
+        var nameElem = document.getElementById(nameId);
+        var sizeElem = document.getElementById(sizeId);
+        var dropzone = dropzoneId ? document.getElementById(dropzoneId) : null;
+
+        if (prevImg) prevImg.src = res.dataUrl;
+        if (nameElem) nameElem.textContent = res.name;
+        if (sizeElem) sizeElem.textContent = 'Ready • ~' + res.sizeKb + ' KB';
+        if (prevCard) {{
+          prevCard.classList.remove('hidden');
+          prevCard.style.display = 'flex';
+        }}
+        if (dropzone) {{
+          dropzone.classList.add('hidden');
+          dropzone.style.display = 'none';
+        }}
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+      }});
+    }}
+  </script>
 </head>
 <body class="min-h-full flex flex-col text-slate-800 selection:bg-purple-700 selection:text-white">
 
@@ -1273,6 +1642,40 @@ def render_layout(title, content, user=None, flash_msg=None, flash_type="success
   </footer>
 
   {modal_html}
+
+  <!-- Universal Image Lightbox Modal with Gallery Navigation -->
+  <div id="imageLightboxModal" onclick="if(event.target===this)closeLightbox()" class="hidden fixed inset-0 z-[999999] flex items-center justify-center p-3 sm:p-6 backdrop-blur-md bg-slate-950/85 pointer-events-auto transition-all" style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; width: 100vw; height: 100vh; z-index: 999999; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); display: none;">
+    <div class="relative max-w-5xl max-h-[94vh] flex flex-col items-center justify-center my-auto animate-entrance-1 w-full" onclick="event.stopPropagation()">
+      <div class="w-full flex items-center justify-between pb-2 mb-2 text-white/90">
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-semibold flex items-center gap-1.5"><i data-lucide="image" class="w-4 h-4 text-purple-400"></i> Attachment Preview</span>
+          <span id="lightboxCounter" class="hidden text-xs font-mono bg-white/10 px-2.5 py-0.5 rounded-full text-white/90 border border-white/15">1 / 1</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <a id="lightboxDownloadBtn" href="#" download="ticket_attachment.jpg" target="_blank" class="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors border border-white/20">
+            <i data-lucide="download" class="w-3.5 h-3.5"></i> Download
+          </a>
+          <button type="button" onclick="closeLightbox()" class="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors border border-white/20 cursor-pointer">
+            <i data-lucide="x" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="relative w-full flex items-center justify-center">
+        <!-- Previous Button -->
+        <button id="lightboxPrevBtn" type="button" onclick="navigateLightbox(-1)" class="hidden absolute left-2 sm:-left-6 top-1/2 -translate-y-1/2 z-20 w-11 h-11 rounded-full bg-slate-900/80 hover:bg-purple-700 text-white shadow-xl border border-white/20 flex items-center justify-center transition-all cursor-pointer hover:scale-110 active:scale-95" title="Previous image (Left Arrow)">
+          <i data-lucide="chevron-left" class="w-6 h-6"></i>
+        </button>
+
+        <img id="lightboxImg" src="" alt="Enlarged screenshot" class="max-w-[92vw] max-h-[80vh] object-contain rounded-xl shadow-[0_25px_60px_-15px_rgba(0,0,0,0.8)] border border-white/10 bg-slate-900">
+
+        <!-- Next Button -->
+        <button id="lightboxNextBtn" type="button" onclick="navigateLightbox(1)" class="hidden absolute right-2 sm:-right-6 top-1/2 -translate-y-1/2 z-20 w-11 h-11 rounded-full bg-slate-900/80 hover:bg-purple-700 text-white shadow-xl border border-white/20 flex items-center justify-center transition-all cursor-pointer hover:scale-110 active:scale-95" title="Next image (Right Arrow)">
+          <i data-lucide="chevron-right" class="w-6 h-6"></i>
+        </button>
+      </div>
+    </div>
+  </div>
 
   <script>
     lucide.createIcons();
@@ -1423,6 +1826,18 @@ def render_layout(title, content, user=None, flash_msg=None, flash_type="success
         }});
         var delModal = document.getElementById('deleteModal');
         if (delModal) delModal.classList.add('hidden');
+        var lbModal = document.getElementById('imageLightboxModal');
+        if (lbModal) closeLightbox();
+      }} else if (e.key === 'ArrowLeft') {{
+        var lbModal = document.getElementById('imageLightboxModal');
+        if (lbModal && lbModal.style.display !== 'none' && !lbModal.classList.contains('hidden')) {{
+          navigateLightbox(-1);
+        }}
+      }} else if (e.key === 'ArrowRight') {{
+        var lbModal = document.getElementById('imageLightboxModal');
+        if (lbModal && lbModal.style.display !== 'none' && !lbModal.classList.contains('hidden')) {{
+          navigateLightbox(1);
+        }}
       }}
     }});
 
@@ -1441,7 +1856,7 @@ def render_layout(title, content, user=None, flash_msg=None, flash_type="success
     }}
 
     function hoistModals() {{
-      document.querySelectorAll('#deleteModal, [id$="Modal"]').forEach(function(m) {{
+      document.querySelectorAll('#deleteModal, #imageLightboxModal, [id$="Modal"]').forEach(function(m) {{
         if (m.parentElement && m.parentElement !== document.body) {{
           document.body.appendChild(m);
         }}
@@ -2000,6 +2415,32 @@ def render_ticket_detail(ticket, user):
             int_pill = '<span class="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded bg-amber-200 text-amber-900"><i data-lucide="lock" class="w-2.5 h-2.5"></i> Internal IT Note</span>' if is_int else ''
             icon = "lock" if is_int else ("refresh-cw" if ev.get("action")=="Status Changed" else ("sparkles" if ev.get("action") in ["Ticket Created", "Ticket Issued"] else "message-square"))
 
+            ev_att_html = ""
+            ev_att_list = parse_attachments(ev.get("attachment"))
+            if ev_att_list:
+                ev_gallery_json = json.dumps(ev_att_list).replace('"', '&quot;')
+                cards = []
+                for idx, src in enumerate(ev_att_list):
+                    cards.append(f"""
+                    <div class="relative group/evimg rounded-xl overflow-hidden border border-slate-200 bg-white shadow-xs cursor-pointer hover:border-purple-300 transition-all flex items-center justify-center h-28 sm:h-36"
+                         onclick="openLightbox('{src}', {ev_gallery_json}, {idx})">
+                      <img src="{src}" alt="Update attachment {idx+1}" class="w-full h-full object-cover group-hover/evimg:scale-105 transition-transform duration-200">
+                      <div class="absolute inset-0 bg-slate-900/0 group-hover/evimg:bg-slate-900/25 transition-colors flex items-center justify-center opacity-0 group-hover/evimg:opacity-100">
+                        <span class="px-2 py-0.5 rounded-full bg-slate-900/80 text-white text-[10px] font-semibold flex items-center gap-1 shadow-sm">
+                          <i data-lucide="zoom-in" class="w-3 h-3"></i> Enlarge
+                        </span>
+                      </div>
+                    </div>
+                    """)
+                grid_cols = "grid-cols-2 sm:grid-cols-3 max-w-lg" if len(ev_att_list) > 1 else "grid-cols-1 max-w-sm"
+                ev_att_html = f"""
+                <div class="mt-3 pt-2.5 border-t border-slate-200/70">
+                  <div class="grid {grid_cols} gap-2">
+                    {''.join(cards)}
+                  </div>
+                </div>
+                """
+
             events_html.append(f"""
             <div class="relative flex items-start gap-4 text-xs sm:text-sm pl-1">
               <div class="w-7 h-7 rounded-full flex items-center justify-center shrink-0 z-10 {dot_bg}">
@@ -2015,6 +2456,7 @@ def render_ticket_detail(ticket, user):
                   <span class="text-[11px] text-slate-400 font-mono">{format_time_12h(ev.get('timestamp',''))}</span>
                 </div>
                 <p class="text-xs sm:text-sm leading-relaxed mt-1">{html.escape(ev.get('content',''))}</p>
+                {ev_att_html}
               </div>
             </div>
             """)
@@ -2106,6 +2548,46 @@ def render_ticket_detail(ticket, user):
     snippets = '<div class="hidden sm:flex items-center gap-1.5 text-xs"><span class="text-slate-400 text-[11px]">Quick snippets:</span><button type="button" onclick="document.getElementById(\'comment_box\').value=\'Working on the fix now. Testing across Chrome and mobile.\'" class="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] font-medium">Working on fix</button><button type="button" onclick="document.getElementById(\'comment_box\').value=\'Fixed the issue and verified in staging. Please test on your end.\'" class="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] font-medium">Fixed bug</button></div>' if is_admin else ''
     comment_placeholder = "Type your developer update or internal fix progress (e.g., 'Working on the fix now' or 'Fixed the login page bug')..." if is_admin else "Add follow-up notes, additional details, or feedback for your IT Specialist..."
 
+    ticket_att_list = parse_attachments(ticket.get("attachment"))
+    ticket_att_html = ""
+    if ticket_att_list:
+        ticket_gallery_json = json.dumps(ticket_att_list).replace('"', '&quot;')
+        count_label = f"({len(ticket_att_list)})" if len(ticket_att_list) > 1 else ""
+        cards = []
+        for idx, src in enumerate(ticket_att_list):
+            cards.append(f"""
+            <div class="relative group/attcard rounded-xl overflow-hidden border border-slate-200 bg-white shadow-xs hover:border-purple-400 hover:shadow-md transition-all cursor-pointer flex flex-col"
+                 onclick="openLightbox('{src}', {ticket_gallery_json}, {idx})">
+              <div class="relative w-full h-36 bg-slate-50 flex items-center justify-center overflow-hidden">
+                <img src="{src}" alt="Attached screenshot {idx+1}" class="w-full h-full object-cover group-hover/attcard:scale-105 transition-transform duration-200">
+                <div class="absolute inset-0 bg-slate-900/0 group-hover/attcard:bg-slate-900/25 transition-colors flex items-center justify-center opacity-0 group-hover/attcard:opacity-100">
+                  <span class="px-2.5 py-1 rounded-full bg-slate-900/80 text-white text-[11px] font-semibold flex items-center gap-1 shadow-sm">
+                    <i data-lucide="zoom-in" class="w-3.5 h-3.5"></i> Click to enlarge
+                  </span>
+                </div>
+              </div>
+              <div class="p-2 bg-slate-50/80 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-600">
+                <span class="font-medium truncate">Attachment {idx+1}</span>
+                <span class="text-purple-700 font-semibold flex items-center gap-0.5"><i data-lucide="maximize-2" class="w-3 h-3"></i> View</span>
+              </div>
+            </div>
+            """)
+        grid_cols = "grid-cols-2 sm:grid-cols-3 md:grid-cols-4" if len(ticket_att_list) > 1 else "grid-cols-1 max-w-sm"
+        ticket_att_html = f"""
+        <div class="space-y-2 pt-3 border-t border-slate-200/80">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+              <i data-lucide="paperclip" class="w-3.5 h-3.5 text-purple-700"></i>
+              <span>Attached Screenshots / Images {count_label}</span>
+            </h3>
+            <span class="text-[11px] text-slate-400 font-medium">Click any image to enlarge & browse</span>
+          </div>
+          <div class="grid {grid_cols} gap-3">
+            {''.join(cards)}
+          </div>
+        </div>
+        """
+
     main_body = f"""
     <div class="space-y-6">
       <div class="animate-entrance-1 flex flex-wrap items-center justify-between gap-3">
@@ -2144,6 +2626,7 @@ def render_ticket_detail(ticket, user):
             <div class="space-y-2 pt-2">
               <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Detailed Description</h3>
               <div class="p-4 rounded-xl bg-slate-50/80 border border-slate-200/80 text-slate-700 text-sm leading-relaxed whitespace-pre-line">{html.escape(ticket['description'].strip())}</div>
+              {ticket_att_html}
             </div>
           </div>
 
@@ -2162,8 +2645,11 @@ def render_ticket_detail(ticket, user):
             </div>
 
             <div class="pt-6 border-t border-slate-200">
-              <form action="/add-comment" method="POST" class="space-y-3">
+              <form action="/add-comment" method="POST" class="space-y-3" onsubmit="return validateCommentForm(this)">
                 <input type="hidden" name="id" value="{ticket['id']}">
+                <input type="hidden" name="attachment" id="commentAttachmentInput">
+                <input type="file" id="commentFileInput" accept="image/*" multiple class="hidden" onchange="commentAttManager.handleFiles(this.files); this.value='';">
+
                 <div class="flex items-center justify-between">
                   <label for="comment_box" class="block text-xs font-bold uppercase tracking-wider text-slate-600">
                     {'Add Developer Timeline Update or Note' if is_admin else 'Follow-up or Instruction to IT'}
@@ -2171,12 +2657,22 @@ def render_ticket_detail(ticket, user):
                   {snippets}
                 </div>
 
-                <textarea id="comment_box" name="comment" rows="3" required placeholder="{comment_placeholder}"
+                <textarea id="comment_box" name="comment" rows="3" placeholder="{comment_placeholder}"
                           class="w-full p-3.5 rounded-xl border border-slate-200 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-purple-700 bg-slate-50/50"></textarea>
 
-                <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-                  {comment_extra}
-                  <button type="submit" class="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-purple-700 hover:bg-purple-800 text-white text-xs sm:text-sm font-bold shadow-md shadow-purple-900/20 transition-all">
+                <!-- Attached image preview grid -->
+                <div id="commentPreviewGrid" class="hidden grid grid-cols-2 sm:grid-cols-3 gap-2.5 pt-1 animate-entrance-1" style="display: none;"></div>
+
+                <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
+                  <div class="flex flex-wrap items-center gap-2.5">
+                    {comment_extra}
+                    <button type="button" onclick="document.getElementById('commentFileInput').click()" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 hover:border-purple-300 bg-white hover:bg-purple-50/50 text-slate-700 hover:text-purple-700 text-xs font-semibold transition-all cursor-pointer shadow-xs">
+                      <i data-lucide="image-plus" class="w-3.5 h-3.5 text-purple-700"></i>
+                      <span>Attach Images</span>
+                    </button>
+                    <span id="commentAttCounter" class="hidden text-[11px] font-semibold text-purple-700 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-full" style="display: none;"></span>
+                  </div>
+                  <button type="submit" class="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-purple-700 hover:bg-purple-800 text-white text-xs sm:text-sm font-bold shadow-md shadow-purple-900/20 transition-all cursor-pointer">
                     <i data-lucide="send" class="w-4 h-4"></i>
                     <span>Post Update</span>
                   </button>
@@ -2185,6 +2681,43 @@ def render_ticket_detail(ticket, user):
             </div>
           </div>
         </div>
+
+        <script>
+          var commentAttManager = createAttachmentManager({{
+            inputId: 'commentAttachmentInput',
+            gridId: 'commentPreviewGrid',
+            counterId: 'commentAttCounter'
+          }});
+
+          function validateCommentForm(form) {{
+            var c = form.comment ? form.comment.value.trim() : '';
+            var a = form.attachment ? form.attachment.value.trim() : '';
+            if (!c && !a) {{
+              alert('Please enter an update message or attach at least one image.');
+              if (form.comment) form.comment.focus();
+              return false;
+            }}
+            return true;
+          }}
+
+          var commentBox = document.getElementById('comment_box');
+          if (commentBox) {{
+            commentBox.addEventListener('paste', function(e) {{
+              if (!e.clipboardData || !e.clipboardData.items) return;
+              var files = [];
+              for (var i = 0; i < e.clipboardData.items.length; i++) {{
+                var item = e.clipboardData.items[i];
+                if (item.type && item.type.indexOf('image') !== -1) {{
+                  var file = item.getAsFile();
+                  if (file) files.push(file);
+                }}
+              }}
+              if (files.length > 0) {{
+                commentAttManager.handleFiles(files);
+              }}
+            }});
+          }}
+        </script>
 
         <div class="space-y-6">
           {sidebar_controls}
@@ -2293,21 +2826,140 @@ def render_submit_ticket_form(user):
             </p>
           </div>
 
+          <!-- ATTACHMENT SECTION -->
+          <div class="space-y-2">
+            <label class="block text-xs font-bold uppercase tracking-wider text-slate-700">
+              Attach Screenshot or Image <span class="text-slate-400 font-normal lowercase">(optional)</span>
+            </label>
+            
+            <input type="hidden" name="attachment" id="ticketAttachmentInput">
+            <input type="file" id="ticketFileInput" accept="image/*" multiple class="hidden" onchange="ticketAttManager.handleFiles(this.files); this.value='';">
+
+            <!-- Dropzone -->
+            <div id="ticketDropzone" onclick="document.getElementById('ticketFileInput').click()"
+                 class="border-2 border-dashed border-slate-300 hover:border-purple-600 rounded-xl p-5 text-center cursor-pointer transition-all bg-slate-50/60 hover:bg-purple-50/30 group">
+              <div class="flex flex-col items-center justify-center gap-2">
+                <div class="w-10 h-10 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center group-hover:scale-110 transition-transform">
+                  <i data-lucide="image-plus" class="w-5 h-5"></i>
+                </div>
+                <div>
+                  <p class="text-xs sm:text-sm font-bold text-slate-700 group-hover:text-purple-700 transition-colors">
+                    Click to upload images or drag & drop multiple files
+                  </p>
+                  <p class="text-[11px] text-slate-400 mt-0.5">
+                    PNG, JPG, WebP &bull; or paste screenshots directly with <kbd class="px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-mono text-[10px]">Ctrl+V</kbd>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Staged Attachments Grid -->
+            <div id="ticketPreviewGrid" class="hidden grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 pt-1 animate-entrance-1" style="display: none;"></div>
+            <div class="flex items-center justify-between">
+              <span id="ticketAttCounter" class="hidden text-xs font-semibold text-purple-700 bg-purple-50 border border-purple-200 px-2.5 py-1 rounded-full" style="display: none;"></span>
+            </div>
+          </div>
+
           <div class="pt-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
             <a href="/" class="w-full sm:w-auto text-center px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:text-slate-900 text-xs sm:text-sm font-semibold">
               Cancel
             </a>
-            <button type="submit" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-purple-700 hover:bg-purple-800 text-white text-xs sm:text-sm font-bold shadow-md shadow-purple-900/20 transition-all">
+            <button type="submit" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-purple-700 hover:bg-purple-800 text-white text-xs sm:text-sm font-bold shadow-md shadow-purple-900/20 transition-all cursor-pointer">
               <i data-lucide="check" class="w-4 h-4"></i>
               <span>Assign Ticket to IT</span>
             </button>
           </div>
         </form>
+
+        <script>
+          var ticketAttManager = createAttachmentManager({{
+            inputId: 'ticketAttachmentInput',
+            gridId: 'ticketPreviewGrid',
+            counterId: 'ticketAttCounter'
+          }});
+
+          var dropzone = document.getElementById('ticketDropzone');
+          if (dropzone) {{
+            ['dragenter', 'dragover'].forEach(function(eventName) {{
+              dropzone.addEventListener(eventName, function(e) {{
+                e.preventDefault();
+                e.stopPropagation();
+                dropzone.classList.add('border-purple-600', 'bg-purple-50/50');
+              }});
+            }});
+            ['dragleave', 'drop'].forEach(function(eventName) {{
+              dropzone.addEventListener(eventName, function(e) {{
+                e.preventDefault();
+                e.stopPropagation();
+                dropzone.classList.remove('border-purple-600', 'bg-purple-50/50');
+              }});
+            }});
+            dropzone.addEventListener('drop', function(e) {{
+              var dt = e.dataTransfer;
+              if (dt && dt.files && dt.files.length) {{
+                ticketAttManager.handleFiles(dt.files);
+              }}
+            }});
+          }}
+
+          window.addEventListener('paste', function(e) {{
+            if (!e.clipboardData || !e.clipboardData.items) return;
+            var files = [];
+            for (var i = 0; i < e.clipboardData.items.length; i++) {{
+              var item = e.clipboardData.items[i];
+              if (item.type && item.type.indexOf('image') !== -1) {{
+                var file = item.getAsFile();
+                if (file) files.push(file);
+              }}
+            }}
+            if (files.length > 0) {{
+              ticketAttManager.handleFiles(files);
+            }}
+          }});
+        </script>
       </div>
     </div>
     """
 
 def render_edit_ticket_form(ticket, user):
+    existing_att_list = parse_attachments(ticket.get("attachment"))
+    initial_json = json.dumps(existing_att_list)
+
+    att_section = f"""
+    <div class="space-y-3">
+      <div class="flex items-center justify-between">
+        <label class="block text-xs font-bold uppercase tracking-wider text-slate-700">
+          Attached Screenshots / Images <span class="text-slate-400 font-normal lowercase">(optional)</span>
+        </label>
+        <span id="editAttCounter" class="text-xs font-semibold text-purple-700 bg-purple-50 border border-purple-200 px-2.5 py-0.5 rounded-full"></span>
+      </div>
+
+      <input type="hidden" name="attachment" id="editAttachmentInput" value="">
+      <input type="file" id="editFileInput" accept="image/*" multiple class="hidden" onchange="editAttManager.handleFiles(this.files); this.value='';">
+
+      <!-- Dropzone -->
+      <div id="editDropzone" onclick="document.getElementById('editFileInput').click()"
+           class="border-2 border-dashed border-slate-300 hover:border-purple-600 rounded-xl p-5 text-center cursor-pointer transition-all bg-slate-50/60 hover:bg-purple-50/30 group">
+        <div class="flex flex-col items-center justify-center gap-2">
+          <div class="w-10 h-10 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center group-hover:scale-110 transition-transform">
+            <i data-lucide="image-plus" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <p class="text-xs sm:text-sm font-bold text-slate-700 group-hover:text-purple-700 transition-colors">
+              Click to upload or drag & drop additional images
+            </p>
+            <p class="text-[11px] text-slate-400 mt-0.5">
+              PNG, JPG, WebP &bull; or paste screenshots directly with <kbd class="px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-mono text-[10px]">Ctrl+V</kbd>
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Preview Grid -->
+      <div id="editPreviewGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 pt-1"></div>
+    </div>
+    """
+
     return f"""
     <div class="max-w-3xl mx-auto space-y-6">
       <div class="animate-entrance-1 flex items-center justify-between">
@@ -2387,16 +3039,66 @@ def render_edit_ticket_form(ticket, user):
             </p>
           </div>
 
+          {att_section}
+
           <div class="pt-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
             <a href="/ticket?id={ticket['id']}" class="w-full sm:w-auto text-center px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:text-slate-900 text-xs sm:text-sm font-semibold">
               Cancel
             </a>
-            <button type="submit" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-purple-700 hover:bg-purple-800 text-white text-xs sm:text-sm font-bold shadow-md shadow-purple-900/20 transition-all">
+            <button type="submit" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-purple-700 hover:bg-purple-800 text-white text-xs sm:text-sm font-bold shadow-md shadow-purple-900/20 transition-all cursor-pointer">
               <i data-lucide="check" class="w-4 h-4"></i>
               <span>Save Changes</span>
             </button>
           </div>
         </form>
+
+        <script>
+          var editAttManager = createAttachmentManager({{
+            inputId: 'editAttachmentInput',
+            gridId: 'editPreviewGrid',
+            counterId: 'editAttCounter',
+            initialUrls: {initial_json}
+          }});
+
+          var editDropzone = document.getElementById('editDropzone');
+          if (editDropzone) {{
+            ['dragenter', 'dragover'].forEach(function(eventName) {{
+              editDropzone.addEventListener(eventName, function(e) {{
+                e.preventDefault();
+                e.stopPropagation();
+                editDropzone.classList.add('border-purple-600', 'bg-purple-50/50');
+              }});
+            }});
+            ['dragleave', 'drop'].forEach(function(eventName) {{
+              editDropzone.addEventListener(eventName, function(e) {{
+                e.preventDefault();
+                e.stopPropagation();
+                editDropzone.classList.remove('border-purple-600', 'bg-purple-50/50');
+              }});
+            }});
+            editDropzone.addEventListener('drop', function(e) {{
+              var dt = e.dataTransfer;
+              if (dt && dt.files && dt.files.length) {{
+                editAttManager.handleFiles(dt.files);
+              }}
+            }});
+          }}
+
+          window.addEventListener('paste', function(e) {{
+            if (!e.clipboardData || !e.clipboardData.items) return;
+            var files = [];
+            for (var i = 0; i < e.clipboardData.items.length; i++) {{
+              var item = e.clipboardData.items[i];
+              if (item.type && item.type.indexOf('image') !== -1) {{
+                var file = item.getAsFile();
+                if (file) files.push(file);
+              }}
+            }}
+            if (files.length > 0) {{
+              editAttManager.handleFiles(files);
+            }}
+          }});
+        </script>
       </div>
     </div>
     """
@@ -2721,7 +3423,7 @@ class TicketServerHandler(http.server.BaseHTTPRequestHandler):
 
     def parse_post_data(self):
         content_length = int(self.headers.get("Content-Length", 0))
-        post_body = self.rfile.read(content_length).decode("utf-8")
+        post_body = self.rfile.read(content_length).decode("utf-8", errors="replace")
         parsed = urllib.parse.parse_qs(post_body)
         return {k: v[0] for k, v in parsed.items()}
 
@@ -2868,6 +3570,7 @@ class TicketServerHandler(http.server.BaseHTTPRequestHandler):
             priority = post_data.get("priority", "Medium")
             subject = post_data.get("subject", "").strip()
             description = post_data.get("description", "").strip()
+            attachment = post_data.get("attachment", "").strip() or None
 
             if subject and description:
                 is_admin = (user.get("role") == "admin")
@@ -2881,7 +3584,8 @@ class TicketServerHandler(http.server.BaseHTTPRequestHandler):
                     subject=subject,
                     description=description,
                     submitter_username=user.get("username"),
-                    submitter_is_admin=is_admin
+                    submitter_is_admin=is_admin,
+                    attachment=attachment
                 )
                 self.send_redirect(f"/ticket?id={new_id}&msg=Ticket+{new_id}+issued+successfully!&type=success")
                 return
@@ -2901,6 +3605,8 @@ class TicketServerHandler(http.server.BaseHTTPRequestHandler):
             description = post_data.get("description", "").strip()
             issue_type = post_data.get("issue_type", ticket.get("issue_type", "Web Bug/Error"))
             priority = post_data.get("priority", ticket.get("priority", "Medium"))
+            new_attachment = post_data.get("attachment", "").strip() or None
+            remove_attachment = post_data.get("remove_attachment") == "1"
 
             if not subject or not description:
                 self.send_redirect(f"/edit-ticket?id={t_id}&msg=Subject+and+description+are+required.&type=error")
@@ -2908,7 +3614,11 @@ class TicketServerHandler(http.server.BaseHTTPRequestHandler):
 
             editor_name = user.get("name", "Author")
             editor_role = user.get("role_title", "Author")
-            update_ticket_content_db(t_id, subject, description, issue_type, priority, editor_name=editor_name, editor_role=editor_role)
+            update_ticket_content_db(
+                t_id, subject, description, issue_type, priority,
+                editor_name=editor_name, editor_role=editor_role,
+                attachment=new_attachment, remove_attachment=remove_attachment
+            )
             self.send_redirect(f"/ticket?id={t_id}&msg=Ticket+{t_id}+has+been+successfully+updated!&type=success")
             return
 
@@ -3009,8 +3719,15 @@ class TicketServerHandler(http.server.BaseHTTPRequestHandler):
         elif path == "/add-comment":
             t_id = post_data.get("id")
             comment_text = post_data.get("comment", "").strip()
+            attachment = post_data.get("attachment", "").strip() or None
             is_internal = post_data.get("is_internal") == "true"
-            if t_id and comment_text:
+            if t_id and (comment_text or attachment):
+                if not comment_text and attachment:
+                    att_count = len(parse_attachments(attachment))
+                    if att_count > 1:
+                        comment_text = f"Attached {att_count} screenshots / image updates."
+                    else:
+                        comment_text = "Attached screenshot / image update."
                 if user["role"] == "admin":
                     author = user["name"] if user.get("name") else "IT Specialist"
                     role_label = "IT Specialist"
@@ -3021,7 +3738,7 @@ class TicketServerHandler(http.server.BaseHTTPRequestHandler):
                     action = "Management Follow-up"
                     is_internal = False
 
-                add_ticket_comment_db(t_id, author, role_label, action, comment_text, is_internal)
+                add_ticket_comment_db(t_id, author, role_label, action, comment_text, is_internal, attachment=attachment)
             self.send_redirect(f"/ticket?id={t_id}")
 
         elif path == "/reset":
@@ -3072,7 +3789,7 @@ class WSGIHandlerAdapter:
 
     def parse_post_data(self):
         content_length = int(self.headers.get("Content-Length", 0))
-        post_body = self.rfile.read(content_length).decode("utf-8") if self.rfile else ""
+        post_body = self.rfile.read(content_length).decode("utf-8", errors="replace") if self.rfile else ""
         parsed = urllib.parse.parse_qs(post_body)
         return {k: v[0] for k, v in parsed.items()}
 
